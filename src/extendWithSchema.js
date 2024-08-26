@@ -2,6 +2,8 @@ import { z } from "zod";
 import { Mongo } from "meteor/mongo";
 
 import { unsupportedOps } from "./utils/unsupportedOps";
+import { extendWithUser } from "./extendWithUser";
+import { extendWithDates } from "./extendWithDates";
 import { ValidationError } from "./ValidationError";
 
 
@@ -14,6 +16,15 @@ Object.assign(Mongo.Collection.prototype, {
   _softDelete: false,
   withSchema(schema) {
     this._schema = schema;
+
+    return this;
+  },
+  withUser() {
+    this._withUser = true;
+
+    this._schema = this._schema.extend({
+      userId: z.string().length(17),
+    });
 
     return this;
   },
@@ -72,13 +83,10 @@ writeMethods.forEach(methodName => {
   const method = Mongo.Collection.prototype[methodName];
 
   Mongo.Collection.prototype[methodName] = function(...args) {
+    const options = args[args.length - 1];
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const collection = this;
-    const { _name, _schema, _withDates } = collection;
-
-    // TODO: Support to bypass schema validation
-    // autoCheck can also be skipped on a one-off basis per method call, so we check here if that's the case
-    const options = args[args.length - 1];
+    const { _name, _schema, _withUser, _withDates } = collection;
 
     if (options?.skipSchema) {
       return method.apply(collection, args);
@@ -98,21 +106,11 @@ writeMethods.forEach(methodName => {
     }
 
     if (_withDates) {
-      if (isUpsert) {
-        args[1]["$setOnInsert"] = args[1]["$setOnInsert"] || {};
-        args[1]["$setOnInsert"].createdAt = new Date();
-        args[1]["$setOnInsert"].updatedAt = new Date();
-        args[1]["$set"] = args[1]["$set"] || {};
-        args[1]["$set"].updatedAt = new Date();
-      } else if (isUpdate) {
-        args[1]["$set"] = args[1]["$set"] || {};
-        args[1]["$set"].updatedAt = new Date();
-        args[1]["$set"].createdAt = undefined;
-        delete args[1]["$set"].createdAt;
-      } else {
-        args[0].createdAt = new Date();
-        args[0].updatedAt = new Date();
-      }
+      extendWithDates(args, { isUpsert, isUpdate });
+    }
+
+    if (_withUser) {
+      extendWithUser(args, { isUpsert, isUpdate });
     }
 
     const schemaToCheck = isUpdate ? _schema.deepPartial() : _schema;

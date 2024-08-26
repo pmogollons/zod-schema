@@ -25,6 +25,7 @@ Package.onTest(function (api) {
 
   api.use([
     "mongo",
+    "random",
     "tinytest",
     "ecmascript",
     "typescript",

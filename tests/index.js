@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Mongo } from "meteor/mongo";
+import { Random } from "meteor/random";
 import { Tinytest } from "meteor/tinytest";
 
 import { ValidationError } from "../src/ValidationError";
@@ -369,4 +370,50 @@ Tinytest.addAsync("extendWithSchema - skip schema validation", async (test) => {
   const updatedDoc = await TestCollection.findOneAsync(id);
   test.equal(updatedDoc.age, "31", "Age should be updated as a string");
 });
+
+
+Tinytest.addAsync("extendWithSchema - withUser", async (test) => {
+  const TestCollection = createTestCollection("test");
+  const schema = z.object({
+    name: z.string(),
+    age: z.number(),
+    createdBy: z.string().optional(),
+    updatedBy: z.string().optional(),
+  });
+
+  TestCollection.withSchema(schema).withUser();
+
+  // Mock user context
+  const mockUserId = Random.id();
+  const originalUserId = Meteor.userId;
+  Meteor.userId = () => mockUserId;
+
+  // Test inserting with user
+  const id = await TestCollection.insertAsync({ name: "Alice", age: 25 });
+  let doc = await TestCollection.findOneAsync(id);
+  test.equal(doc.name, "Alice", "Name should be inserted");
+  test.equal(doc.age, 25, "Age should be inserted");
+  test.equal(doc.userId, mockUserId, "userId should be set to the current user ID");
+
+  // Test updating with user
+  await TestCollection.updateAsync(id, { $set: { age: 26 } });
+  doc = await TestCollection.findOneAsync(id);
+  test.equal(doc.age, 26, "Age should be updated");
+  test.equal(doc.userId, mockUserId, "userId should remain unchanged");
+
+  // Test inserting without user context
+  Meteor.userId = () => null;
+
+  try {
+    await TestCollection.insertAsync({ name: "Bob", age: 30 });
+    test.fail("Should throw ValidationError for invalid type");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].type, "invalid_type", "Error should be about invalid type");
+  }
+
+  // Restore original Meteor.userId
+  Meteor.userId = originalUserId;
+});
+
 
