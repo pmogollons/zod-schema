@@ -7,11 +7,14 @@ import { ValidationError } from "../src/ValidationError";
 
 
 // Helper function to create a test collection
-const createTestCollection = (name) => {
-  const collection = new Mongo.Collection(null);
+const createTestCollection = (name, noMiniMongo = false) => {
+  const collection = new Mongo.Collection(noMiniMongo ? name : null);
   collection._name = name;
   return collection;
 };
+
+const UsersCollection = createTestCollection("users", true);
+
 
 Tinytest.add("extendWithSchema - withSchema", (test) => {
   const TestCollection = createTestCollection("test");
@@ -304,7 +307,6 @@ Tinytest.addAsync("extendWithSchema - array operations", async (test) => {
 });
 
 Tinytest.addAsync("extendWithSchema - array operations with inner object", async (test) => {
-  const TestCollection = createTestCollection("test");
   const schema = z.object({
     name: z.string(),
     tags: z.array(z.object({
@@ -312,23 +314,37 @@ Tinytest.addAsync("extendWithSchema - array operations with inner object", async
     })),
   });
 
-  TestCollection.withSchema(schema);
+  UsersCollection.withSchema(schema);
 
-  const id = await TestCollection.insertAsync({ name: "John", tags: [{ name: "tag1", miaw: "miaw" }] });
-  let doc = await TestCollection.findOneAsync(id);
+  const id = await UsersCollection.insertAsync({ name: "John", tags: [{ name: "tag1", miaw: "miaw" }] });
+  let doc = await UsersCollection.findOneAsync(id);
   test.equal(doc.tags, [{ name: "tag1" }], "Tag should be pushed to array without miaw field");
 
-  await TestCollection.updateAsync(id, { $push: { tags: { name: "tag2", miaw: "miaw" } } });
-  doc = await TestCollection.findOneAsync(id);
+  await UsersCollection.updateAsync(id, { $push: { tags: { name: "tag2", miaw: "miaw" } } });
+  doc = await UsersCollection.findOneAsync(id);
   test.equal(doc.tags, [{ name: "tag1" }, { name: "tag2" }], "Tag should be pushed to array without miaw field");
 
-  await TestCollection.updateAsync(id, { $pull: { tags: { name: "tag2" } } });
-  doc = await TestCollection.findOneAsync(id);
+  await UsersCollection.updateAsync(id, { $pull: { tags: { name: "tag2" } } });
+  doc = await UsersCollection.findOneAsync(id);
   test.equal(doc.tags, [{ name: "tag1" }], "Tag2 should be pulled from array");
 
-  await TestCollection.updateAsync(id, { $push: { tags: { $each: [{ name: "tag2", miaw: "miaw" }, { name: "tag3", miaw: "miaw" }] } } });
-  doc = await TestCollection.findOneAsync(id);
+  await UsersCollection.updateAsync(id, { $push: { tags: { $each: [{ name: "tag2", miaw: "miaw" }, { name: "tag3", miaw: "miaw" }] } } });
+  doc = await UsersCollection.findOneAsync(id);
   test.equal(doc.tags, [{ name: "tag1" }, { name: "tag2" }, { name: "tag3" }], "Tags should be pushed to array without miaw field");
+
+  await UsersCollection.updateAsync(id, { $push: { tags: { $each: [{ name: "tag4" }, { name: "tag5" }], $sort: -1 } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag5" }, { name: "tag4" }, { name: "tag3" }, { name: "tag2" }, { name: "tag1" }], "Tags should be pushed to array in correct order");
+
+  await UsersCollection.updateAsync(id, { $push: { tags: { $each: [{ name: "tag6" }, { name: "tag7" }], $slice: 3, $sort: -1 } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag7" }, { name: "tag6" }, { name: "tag5" }], "Tags should be limited to the last 3 elements after pushing new tags");
+
+  await UsersCollection.updateAsync(id, { $push: { tags: { $each: [{ name: "tag8" }, { name: "tag9" }], $position: 2 } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag7" }, { name: "tag6" }, { name: "tag8" }, { name: "tag9" }, { name: "tag5" }], "Tags should include tag8 and tag9 after pushing with $each in position 2");
+
+  await UsersCollection.removeAsync({}, { multi: true });
 });
 
 

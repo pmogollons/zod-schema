@@ -136,7 +136,18 @@ writeMethods.forEach(methodName => {
                 const elementSchema = fieldSchema instanceof z.ZodArray ? fieldSchema.element : fieldSchema._def.innerType.element;
 
                 if (args[1][key][field]?.["$each"]) {
-                  args[1][key][field]["$each"] = fieldSchema.parse(args[1][key][field]["$each"]);
+                  const schema = z.object({
+                    $each: fieldSchema,
+                    $position: z.number().int().optional(),
+                    $slice: z.number().int().optional(),
+                    $sort: z.union([
+                      z.record(z.string(), z.union([z.literal(1), z.literal(-1)])),
+                      z.literal(1),
+                      z.literal(-1),
+                    ]).optional(),
+                  });
+
+                  args[1][key][field] = schema.parse(args[1][key][field]);
                 } else {
                   args[1][key][field] = elementSchema.parse(args[1][key][field]);
                 }
