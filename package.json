@@ -3,7 +3,7 @@
   "version": "1.0.1",
   "description": "Meteor collection schema validation using zod",
   "scripts": {
-    "test": "meteor test-packages ./ --driver-package test-in-browser",
+    "test": "meteor test-packages ./ --driver-package test-in-browser --port 3420 --open",
     "publish": "meteor publish --release=3.0.2"
   },
   "author": "pmogollons",
