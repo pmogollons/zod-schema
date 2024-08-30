@@ -320,6 +320,117 @@ Tinytest.addAsync("extendWithSchema - array operations with inner object", async
   let doc = await UsersCollection.findOneAsync(id);
   test.equal(doc.tags, [{ name: "tag1" }], "Tag should be pushed to array without miaw field");
 
+  try {
+    await UsersCollection.updateAsync(id, { $push: { tags: { miaw: "miaw" } } });
+    test.fail("Should throw ValidationError for invalid array operation");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].type, "invalid_type", "Error should be about invalid type");
+  }
+
+  await UsersCollection.updateAsync(id, { $push: { tags: { name: "tag2", miaw: "miaw" } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag1" }, { name: "tag2" }], "Tag should be pushed to array without miaw field");
+
+  await UsersCollection.updateAsync(id, { $pull: { tags: { name: "tag2" } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag1" }], "Tag2 should be pulled from array");
+
+  await UsersCollection.updateAsync(id, { $push: { tags: { $each: [{ name: "tag2", miaw: "miaw" }, { name: "tag3", miaw: "miaw" }] } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag1" }, { name: "tag2" }, { name: "tag3" }], "Tags should be pushed to array without miaw field");
+
+  await UsersCollection.updateAsync(id, { $push: { tags: { $each: [{ name: "tag4" }, { name: "tag5" }], $sort: -1 } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag5" }, { name: "tag4" }, { name: "tag3" }, { name: "tag2" }, { name: "tag1" }], "Tags should be pushed to array in correct order");
+
+  await UsersCollection.updateAsync(id, { $push: { tags: { $each: [{ name: "tag6" }, { name: "tag7" }], $slice: 3, $sort: -1 } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag7" }, { name: "tag6" }, { name: "tag5" }], "Tags should be limited to the last 3 elements after pushing new tags");
+
+  await UsersCollection.updateAsync(id, { $push: { tags: { $each: [{ name: "tag8" }, { name: "tag9" }], $position: 2 } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag7" }, { name: "tag6" }, { name: "tag8" }, { name: "tag9" }, { name: "tag5" }], "Tags should include tag8 and tag9 after pushing with $each in position 2");
+
+  await UsersCollection.removeAsync({}, { multi: true });
+});
+
+Tinytest.addAsync("extendWithSchema - array operations with optional object array", async (test) => {
+  const schema = z.object({
+    name: z.string(),
+    tags: z
+      .object({
+        name: z.string(),
+      })
+      .array()
+      .optional(),
+  });
+
+  UsersCollection.withSchema(schema);
+
+  const id = await UsersCollection.insertAsync({ name: "John", tags: [{ name: "tag1", miaw: "miaw" }] });
+  let doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag1" }], "Tag should be pushed to array without miaw field");
+
+  try {
+    await UsersCollection.updateAsync(id, { $push: { tags: { miaw: "miaw" } } });
+    test.fail("Should throw ValidationError for invalid array operation");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].type, "invalid_type", "Error should be about invalid type");
+  }
+
+  await UsersCollection.updateAsync(id, { $push: { tags: { name: "tag2", miaw: "miaw" } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag1" }, { name: "tag2" }], "Tag should be pushed to array without miaw field");
+
+  await UsersCollection.updateAsync(id, { $pull: { tags: { name: "tag2" } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag1" }], "Tag2 should be pulled from array");
+
+  await UsersCollection.updateAsync(id, { $push: { tags: { $each: [{ name: "tag2", miaw: "miaw" }, { name: "tag3", miaw: "miaw" }] } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag1" }, { name: "tag2" }, { name: "tag3" }], "Tags should be pushed to array without miaw field");
+
+  await UsersCollection.updateAsync(id, { $push: { tags: { $each: [{ name: "tag4" }, { name: "tag5" }], $sort: -1 } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag5" }, { name: "tag4" }, { name: "tag3" }, { name: "tag2" }, { name: "tag1" }], "Tags should be pushed to array in correct order");
+
+  await UsersCollection.updateAsync(id, { $push: { tags: { $each: [{ name: "tag6" }, { name: "tag7" }], $slice: 3, $sort: -1 } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag7" }, { name: "tag6" }, { name: "tag5" }], "Tags should be limited to the last 3 elements after pushing new tags");
+
+  await UsersCollection.updateAsync(id, { $push: { tags: { $each: [{ name: "tag8" }, { name: "tag9" }], $position: 2 } } });
+  doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag7" }, { name: "tag6" }, { name: "tag8" }, { name: "tag9" }, { name: "tag5" }], "Tags should include tag8 and tag9 after pushing with $each in position 2");
+
+  await UsersCollection.removeAsync({}, { multi: true });
+});
+
+Tinytest.addAsync("extendWithSchema - array operations with optional object array 2", async (test) => {
+  const schema = z.object({
+    name: z.string(),
+    tags: z
+      .array(z.object({
+        name: z.string(),
+      }))
+      .optional(),
+  });
+
+  UsersCollection.withSchema(schema);
+
+  const id = await UsersCollection.insertAsync({ name: "John", tags: [{ name: "tag1", miaw: "miaw" }] });
+  let doc = await UsersCollection.findOneAsync(id);
+  test.equal(doc.tags, [{ name: "tag1" }], "Tag should be pushed to array without miaw field");
+
+  try {
+    await UsersCollection.updateAsync(id, { $push: { tags: { miaw: "miaw" } } });
+    test.fail("Should throw ValidationError for invalid array operation");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].type, "invalid_type", "Error should be about invalid type");
+  }
+
   await UsersCollection.updateAsync(id, { $push: { tags: { name: "tag2", miaw: "miaw" } } });
   doc = await UsersCollection.findOneAsync(id);
   test.equal(doc.tags, [{ name: "tag1" }, { name: "tag2" }], "Tag should be pushed to array without miaw field");

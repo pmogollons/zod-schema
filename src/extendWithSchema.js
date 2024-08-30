@@ -130,9 +130,10 @@ writeMethods.forEach(methodName => {
             const fields = Object.keys(args[1][key]);
 
             fields.forEach((field) => {
-              const fieldSchema = schemaToCheck.shape[field];
+              let fieldSchema = _schema.shape[field];
+              fieldSchema = fieldSchema instanceof z.ZodOptional ? fieldSchema.unwrap() : fieldSchema;
 
-              if (fieldSchema && (fieldSchema instanceof z.ZodArray || (fieldSchema instanceof z.ZodOptional && fieldSchema._def.innerType instanceof z.ZodArray))) {
+              if (fieldSchema && fieldSchema instanceof z.ZodArray) {
                 const elementSchema = fieldSchema instanceof z.ZodArray ? fieldSchema.element : fieldSchema._def.innerType.element;
 
                 if (args[1][key][field]?.["$each"]) {
