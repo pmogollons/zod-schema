@@ -11,6 +11,7 @@ declare module "meteor/mongo" {
       withSchema(schema: ZodSchema): Collection<T, U>;
       withSoftDelete(): Collection<T, U>;
       withDates(): Collection<T, U>;
+      withUser(): Collection<T, U>;
       recoverAsync(params: AnyObject): Promise<any>;
     }
   }
