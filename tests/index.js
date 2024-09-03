@@ -544,3 +544,33 @@ Tinytest.addAsync("extendWithSchema - withUser", async (test) => {
 });
 
 
+Tinytest.addAsync("extendWithSchema - $inc", async (test) => {
+  const TestCollection = createTestCollection("test");
+  const schema = z.object({
+    name: z.string(),
+    age: z.number(),
+    meta: z.object({
+      version: z.number(),
+      counter: z.number(),
+    }),
+    transactions: z.array(z.object({
+      amount: z.number(),
+    })),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({ name: "Alice", age: 25, meta: { version: 1, counter: 1 }, transactions: [{ amount: 100 }] });
+  await TestCollection.updateAsync(docId, { $inc: { age: 1 } });
+  const doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.age, 26, "Age should be incremented");
+
+  await TestCollection.updateAsync(docId, { $inc: { "meta.version": 1 } });
+  const doc2 = await TestCollection.findOneAsync(docId);
+  test.equal(doc2.meta.version, 2, "Version should be incremented");
+  test.equal(doc2.meta.counter, 1, "Counter should be 1");
+
+  await TestCollection.updateAsync(docId, { $inc: { "transactions.0.amount": 1 } });
+  const doc3 = await TestCollection.findOneAsync(docId);
+  test.equal(doc3.transactions[0].amount, 101, "Amount should be incremented");
+});
