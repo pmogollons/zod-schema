@@ -706,3 +706,127 @@ Tinytest.addAsync("extendWithSchema - $pop", async (test) => {
   }
 });
 
+Tinytest.addAsync("extendWithSchema - Schema with union", async (test) => {
+  const TestCollection = createTestCollection("test");
+  const schema = z.object({
+    id: z.string(),
+    data: z.union([
+      z.object({ type: z.literal("string"), value: z.string() }),
+      z.object({ type: z.literal("number"), value: z.number() }),
+      z.object({ type: z.literal("boolean"), value: z.boolean() }),
+    ]),
+  });
+
+  TestCollection.withSchema(schema);
+
+  // Test valid insertions
+  const stringId = await TestCollection.insertAsync({ id: "str1", data: { type: "string", value: "test" } });
+  test.isNotUndefined(stringId, "Should insert string data");
+
+  const numberId = await TestCollection.insertAsync({ id: "num1", data: { type: "number", value: 42 } });
+  test.isNotUndefined(numberId, "Should insert number data");
+
+  const booleanId = await TestCollection.insertAsync({ id: "bool1", data: { type: "boolean", value: true } });
+  test.isNotUndefined(booleanId, "Should insert boolean data");
+
+  // Test invalid insertions
+  try {
+    await TestCollection.insertAsync({ id: "invalid1", data: { type: "string", value: 123 } });
+    test.fail("Should not insert mismatched type and value");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+  }
+
+  try {
+    await TestCollection.insertAsync({ id: "invalid2", data: { type: "unknown", value: "test" } });
+    test.fail("Should not insert unknown type");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+  }
+
+  // Test valid updates
+  await TestCollection.updateAsync(stringId, { $set: { data: { type: "number", value: 100 } } });
+  const updatedDoc = await TestCollection.findOneAsync(stringId);
+  test.equal(updatedDoc.data, { type: "number", value: 100 }, "Should update to valid union type");
+
+  // Test invalid updates
+  try {
+    await TestCollection.updateAsync(numberId, { $set: { data: { type: "number", value: "not a number" } } });
+    test.fail("Should not update with invalid value for type");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+  }
+});
+
+Tinytest.addAsync("extendWithSchema - Schema with union on nested field", async (test) => {
+  const TestCollection = new Mongo.Collection("nestedUnionSchema");
+  const schema = z.object({
+    id: z.string(),
+    nested: z.object({
+      data: z.union([
+        z.object({ type: z.literal("string"), value: z.string() }),
+        z.object({ type: z.literal("number"), value: z.number() }),
+        z.object({ type: z.literal("boolean"), value: z.boolean() }),
+      ]),
+    }),
+  });
+
+  TestCollection.withSchema(schema);
+
+  // Test valid insertions
+  const stringId = await TestCollection.insertAsync({
+    id: "str1",
+    nested: { data: { type: "string", value: "test" } },
+  });
+  test.isNotUndefined(stringId, "Should insert nested string data");
+
+  const numberId = await TestCollection.insertAsync({
+    id: "num1",
+    nested: { data: { type: "number", value: 42 } },
+  });
+  test.isNotUndefined(numberId, "Should insert nested number data");
+
+  const booleanId = await TestCollection.insertAsync({
+    id: "bool1",
+    nested: { data: { type: "boolean", value: true } },
+  });
+  test.isNotUndefined(booleanId, "Should insert nested boolean data");
+
+  // Test invalid insertions
+  try {
+    await TestCollection.insertAsync({
+      id: "invalid1",
+      nested: { data: { type: "string", value: 123 } },
+    });
+    test.fail("Should not insert mismatched type and value in nested field");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+  }
+
+  try {
+    await TestCollection.insertAsync({
+      id: "invalid2",
+      nested: { data: { type: "unknown", value: "test" } },
+    });
+    test.fail("Should not insert unknown type in nested field");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+  }
+
+  // Test valid updates
+  await TestCollection.updateAsync(stringId, {
+    $set: { "nested.data": { type: "number", value: 100 } },
+  });
+  const updatedDoc = await TestCollection.findOneAsync(stringId);
+  test.equal(updatedDoc.nested.data, { type: "number", value: 100 }, "Should update nested field to valid union type");
+
+  // Test invalid updates
+  try {
+    await TestCollection.updateAsync(numberId, {
+      $set: { "nested.data": { type: "number", value: "not a number" } },
+    });
+    test.fail("Should not update nested field with invalid value for type");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+  }
+});
