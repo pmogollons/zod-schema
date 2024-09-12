@@ -160,6 +160,38 @@ writeMethods.forEach(methodName => {
                 }], "Invalid array operation");
               }
             });
+          } else if (key === "$pop") {
+            const fields = Object.keys(args[1][key]);
+
+            fields.forEach((field) => {
+              const fieldSchema = fieldFromPath(_schema, field);
+
+              if (!fieldSchema) {
+                throw new ValidationError([{
+                  name: key,
+                  type: "invalid_field",
+                  message: `${key} does not exist`,
+                }], "Invalid field");
+              }
+
+              const fieldIsArray = fieldSchema instanceof z.ZodArray;
+
+              if (!fieldIsArray) {
+                throw new ValidationError([{
+                  name: key,
+                  type: "invalid_array_field",
+                  message: `${key} is not a valid array`,
+                }], "Invalid array field");
+              }
+
+              if (![1, -1].includes(args[1][key][field])) {
+                throw new ValidationError([{
+                  name: key,
+                  type: "invalid_array_pop_operation",
+                  message: `${key} is not a valid array $pop operation. $pop value must be 1 or -1.`,
+                }], "Invalid array $pop operation");
+              }
+            });
           } else if (unsupportedOps.includes(key)) {
             // TODO: Support these operations
           } else {
@@ -189,3 +221,28 @@ writeMethods.forEach(methodName => {
     return method.apply(collection, args);
   };
 });
+
+
+function fieldFromPath(schema, path) {
+  const pathSegments = path.split(".");
+
+  // Traverse the schema by following the path segments
+  let currentSchema = schema;
+
+  for (const segment of pathSegments) {
+    if (currentSchema instanceof z.ZodObject) {
+      currentSchema = currentSchema.shape[segment];
+    } else if (currentSchema instanceof z.ZodOptional) {
+      currentSchema = currentSchema.unwrap().shape[segment];
+    } else {
+      return undefined; // Path does not exist or is not an object
+    }
+  }
+
+  if (currentSchema instanceof z.ZodOptional) {
+    return currentSchema.unwrap();
+  }
+
+  // Check if the final field is an array
+  return currentSchema;
+}

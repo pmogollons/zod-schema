@@ -574,3 +574,82 @@ Tinytest.addAsync("extendWithSchema - $inc", async (test) => {
   const doc3 = await TestCollection.findOneAsync(docId);
   test.equal(doc3.transactions[0].amount, 101, "Amount should be incremented");
 });
+
+
+Tinytest.addAsync("extendWithSchema - $pop", async (test) => {
+  const TestCollection = createTestCollection("popTest2", true);
+  const schema = z.object({
+    name: z.string(),
+    scores: z.array(z.number()),
+    tags: z.array(z.string()),
+    meta: z.object({
+      views: z.array(z.number()).optional(),
+    }).optional(),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({
+    name: "Charlie",
+    scores: [10, 20, 30, 40, 50],
+    tags: ["a", "b", "c", "d", "e"],
+    meta: {
+      views: [1, 2, 3, 4, 5],
+    },
+  });
+
+  // Test $pop with 1 (remove last element)
+  await TestCollection.updateAsync(docId, { $pop: { scores: 1 } });
+  let doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.scores, [10, 20, 30, 40], "Last score should be removed");
+
+  // Test $pop with -1 (remove first element)
+  await TestCollection.updateAsync(docId, { $pop: { tags: -1 } });
+  doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.tags, ["b", "c", "d", "e"], "First tag should be removed");
+
+  // Test $pop on multiple fields
+  await TestCollection.updateAsync(docId, { $pop: { tags: -1, scores: 1 } });
+  doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.tags, ["c", "d", "e"], "First tag should be removed");
+  test.equal(doc.scores, [10, 20, 30], "Last score should be removed");
+
+  // Test $pop with -1 (remove first element) on nested field
+  await TestCollection.updateAsync(docId, { $pop: { "meta.views": -1 } });
+  doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.meta.views, [2, 3, 4, 5], "First view should be removed");
+
+  // Test $pop on empty array
+  await TestCollection.updateAsync(docId, { $set: { scores: [], "meta.views": [1, 2, 3, 4, 5] } });
+  await TestCollection.updateAsync(docId, { $pop: { scores: 1 } });
+  doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.scores, [], "Popping from empty array should have no effect");
+
+  // Test $pop with invalid value
+  try {
+    await TestCollection.updateAsync(docId, { $pop: { tags: 2 } });
+    test.fail("Should throw ValidationError for invalid $pop value");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].type, "invalid_array_pop_operation", "Error should be about invalid array pop operation");
+  }
+
+  // Test $pop with invalid field
+  try {
+    await TestCollection.updateAsync(docId, { $pop: { "miaw.tags": 1 } });
+    test.fail("Should throw ValidationError for invalid field");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].type, "invalid_field", "Error should be about invalid field");
+  }
+
+  // Test $pop with invalid array field
+  try {
+    await TestCollection.updateAsync(docId, { $pop: { name: 1 } });
+    test.fail("Should throw ValidationError for invalid array field");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].type, "invalid_array_field", "Error should be about invalid array field");
+  }
+});
+
