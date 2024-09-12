@@ -233,6 +233,58 @@ Tinytest.addAsync("extendWithSchema - schema validation", async (test) => {
   test.isNotUndefined(id, "Valid document should be inserted");
 });
 
+Tinytest.addAsync("extendWithSchema - schema validation with nested fields", async (test) => {
+  const TestCollection = createTestCollection("nestedTest", true);
+  const schema = z.object({
+    name: z.string(),
+    profile: z.object({
+      age: z.number().positive(),
+      address: z.object({
+        city: z.string(),
+        country: z.string(),
+      }),
+    }),
+  });
+
+  TestCollection.withSchema(schema);
+
+  try {
+    await TestCollection.insertAsync({ name: "John", profile: { age: -1, address: { city: "Barcelona", country: "Spain" } } });
+    test.fail("Should throw ValidationError for negative age");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].name, "profile.age", "Error should be about the age field");
+  }
+
+  const docId = await TestCollection.insertAsync({ name: "John", profile: { age: 21, address: { city: "Barcelona", country: "Spain" } } });
+  let doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.profile.age, 21, "Age should be set correctly");
+  test.equal(doc.profile.address.city, "Barcelona", "City should be set correctly");
+  test.equal(doc.profile.address.country, "Spain", "Country should be set correctly");
+
+  await TestCollection.updateAsync(docId, { $set: { "profile.age": 22 } });
+  doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.profile.age, 22, "Age should be updated correctly");
+
+  await TestCollection.updateAsync(docId, { $set: { "profile.address.city": "Madrid" } });
+  doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.profile.address.city, "Madrid", "City should be updated correctly. Madrid, really?");
+  test.equal(doc.profile.address.country, "Spain", "Country should not be updated");
+
+  await TestCollection.updateAsync(docId, { $set: { "profile.address.miaw": "Madrid" } });
+  doc = await TestCollection.findOneAsync(docId);
+  test.isUndefined(doc.profile.address.miaw, "Miaw should not be set");
+
+  try {
+    await TestCollection.updateAsync(docId, { $set: { "profile.address.city": 123, "profile.age": -21 } });
+    test.fail("Should throw ValidationError");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details?.[0]?.name, "profile.address.city", "Error should be about the city field");
+    test.equal(error.details?.[1]?.name, "profile.age", "Error should be about the age field");
+  }
+});
+
 
 
 Tinytest.addAsync("extendWithSchema - upsert with withDates", async (test) => {
@@ -295,11 +347,12 @@ Tinytest.addAsync("extendWithSchema - array operations", async (test) => {
     test.fail("Should throw ValidationError for invalid array operation");
   } catch (error) {
     test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
-    test.equal(error.details[0].type, "invalid_array_operation", "Error should be about invalid array operation");
+    test.equal(error.details[0].type, "invalid_array_field", "Error should be about invalid array field");
   }
 
   try {
     await TestCollection.updateAsync(id, { $push: { tags: 1 } });
+    test.fail("Should throw ValidationError for invalid array operation");
   } catch (error) {
     test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
     test.equal(error.details[0].type, "invalid_type", "Error should be about invalid type");

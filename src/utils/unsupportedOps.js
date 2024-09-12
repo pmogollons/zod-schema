@@ -9,7 +9,6 @@ export const unsupportedOps = [
 
   "$",
   "$[]",
-  "$pop",
   "$pull",
   "$pullAll",
   "$bit",

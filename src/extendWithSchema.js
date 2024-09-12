@@ -130,59 +130,38 @@ writeMethods.forEach(methodName => {
             const fields = Object.keys(args[1][key]);
 
             fields.forEach((field) => {
-              let fieldSchema = _schema.shape[field];
-              fieldSchema = fieldSchema instanceof z.ZodOptional ? fieldSchema.unwrap() : fieldSchema;
+              const fieldSchema = schemaFromPath(_schema, field);
 
-              if (fieldSchema && fieldSchema instanceof z.ZodArray) {
-                const elementSchema = fieldSchema instanceof z.ZodArray ? fieldSchema.element : fieldSchema._def.innerType.element;
+              checkFieldExists(fieldSchema, field);
+              checkFieldIsArray(fieldSchema, field);
 
-                if (args[1][key][field]?.["$each"]) {
-                  const schema = z.object({
-                    $each: fieldSchema,
-                    $position: z.number().int().optional(),
-                    $slice: z.number().int().optional(),
-                    $sort: z.union([
-                      z.record(z.string(), z.union([z.literal(1), z.literal(-1)])),
-                      z.literal(1),
-                      z.literal(-1),
-                    ]).optional(),
-                  });
+              const elementSchema = fieldSchema instanceof z.ZodArray ? fieldSchema.element : fieldSchema._def.innerType.element;
 
-                  args[1][key][field] = schema.parse(args[1][key][field]);
-                } else {
-                  args[1][key][field] = elementSchema.parse(args[1][key][field]);
-                }
+              if (args[1][key][field]?.["$each"]) {
+                const schema = z.object({
+                  $each: fieldSchema,
+                  $position: z.number().int().optional(),
+                  $slice: z.number().int().optional(),
+                  $sort: z.union([
+                    z.record(z.string(), z.union([z.literal(1), z.literal(-1)])),
+                    z.literal(1),
+                    z.literal(-1),
+                  ]).optional(),
+                });
+
+                args[1][key][field] = schema.parse(args[1][key][field]);
               } else {
-                throw new ValidationError([{
-                  name: [key, field].join("."),
-                  type: "invalid_array_operation",
-                  message: `${key} is not a valid array operation`,
-                }], "Invalid array operation");
+                args[1][key][field] = elementSchema.parse(args[1][key][field]);
               }
             });
           } else if (key === "$pop") {
             const fields = Object.keys(args[1][key]);
 
             fields.forEach((field) => {
-              const fieldSchema = fieldFromPath(_schema, field);
+              const fieldSchema = schemaFromPath(_schema, field);
 
-              if (!fieldSchema) {
-                throw new ValidationError([{
-                  name: key,
-                  type: "invalid_field",
-                  message: `${key} does not exist`,
-                }], "Invalid field");
-              }
-
-              const fieldIsArray = fieldSchema instanceof z.ZodArray;
-
-              if (!fieldIsArray) {
-                throw new ValidationError([{
-                  name: key,
-                  type: "invalid_array_field",
-                  message: `${key} is not a valid array`,
-                }], "Invalid array field");
-              }
+              checkFieldExists(fieldSchema, field);
+              checkFieldIsArray(fieldSchema, field);
 
               if (![1, -1].includes(args[1][key][field])) {
                 throw new ValidationError([{
@@ -195,7 +174,14 @@ writeMethods.forEach(methodName => {
           } else if (unsupportedOps.includes(key)) {
             // TODO: Support these operations
           } else {
-            args[1][key] = schemaToCheck.parse(args[1][key]);
+            const newValue = schemaToCheck.parse(args[1][key]);
+            const { validNestedFields, errors } = validateNestedFields(args[1][key], _schema);
+
+            if (errors.length > 0) {
+              throw new ValidationError(errors, "Nested fields validation error");
+            }
+
+            args[1][key] = Object.assign(newValue, validNestedFields);
           }
         });
       } else {
@@ -223,7 +209,7 @@ writeMethods.forEach(methodName => {
 });
 
 
-function fieldFromPath(schema, path) {
+function schemaFromPath(schema, path) {
   const pathSegments = path.split(".");
 
   // Traverse the schema by following the path segments
@@ -245,4 +231,56 @@ function fieldFromPath(schema, path) {
 
   // Check if the final field is an array
   return currentSchema;
+}
+
+function checkFieldExists(schema, field) {
+  if (!schema) {
+    throw new ValidationError([{
+      name: field,
+      type: "invalid_field",
+      message: `${field} does not exist`,
+    }], "Invalid field");
+  }
+}
+
+function checkFieldIsArray(schema, field) {
+  const fieldIsArray = schema instanceof z.ZodArray;
+
+  if (!fieldIsArray) {
+    throw new ValidationError([{
+      name: field,
+      type: "invalid_array_field",
+      message: `${field} is not a valid array`,
+    }], "Invalid array field");
+  }
+}
+
+function validateNestedFields(object, schema) {
+  const nestedFields = Object.keys(object).filter((key) => key.includes("."));
+  const validNestedFields = {};
+  const errors = [];
+
+  nestedFields.forEach((field) => {
+    const nestedSchema = schemaFromPath(schema, field);
+
+    if (!nestedSchema) {
+      return;
+    }
+
+    const { success, data, error } = nestedSchema.safeParse(object[field]);
+
+    if (success) {
+      validNestedFields[field] = data;
+    } else {
+      error.issues.forEach((err) => {
+        errors.push({
+          name: field,
+          type: err.code,
+          message: err.message,
+        });
+      });
+    }
+  });
+
+  return { validNestedFields, errors };
 }
