@@ -23,6 +23,10 @@ Package.onUse(function (api) {
 Package.onTest(function (api) {
   api.use("pmogollons:zod-schema");
 
+  Npm.depends({
+    "zod": "3.24.0",
+  });
+
   api.use([
     "mongo",
     "random",
