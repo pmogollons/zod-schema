@@ -1,3 +1,6 @@
+import { Match } from "meteor/check";
+
+
 // The "details" property of the ValidationError must be an array of objects
 // containing at least two properties. The "name" and "type" properties are
 // required.
