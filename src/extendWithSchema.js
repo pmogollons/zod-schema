@@ -210,6 +210,7 @@ writeMethods.forEach(methodName => {
 
 
 function schemaFromPath(schema, path) {
+  path = path.replace(".$.", ".");
   const pathSegments = path.split(".");
 
   // Traverse the schema by following the path segments
@@ -218,8 +219,22 @@ function schemaFromPath(schema, path) {
   for (const segment of pathSegments) {
     if (currentSchema instanceof z.ZodObject) {
       currentSchema = currentSchema.shape[segment];
+    } else if (currentSchema instanceof z.ZodArray) {
+      currentSchema = currentSchema.element.shape[segment];
     } else if (currentSchema instanceof z.ZodOptional) {
-      currentSchema = currentSchema.unwrap().shape[segment];
+      const unwrappedSchema = currentSchema.unwrap();
+
+      if (unwrappedSchema instanceof z.ZodObject) {
+        currentSchema = unwrappedSchema.shape[segment];
+      } else if (unwrappedSchema instanceof z.ZodArray) {
+        currentSchema = unwrappedSchema.element.shape[segment];
+      } else {
+        throw new ValidationError([{
+          name: segment,
+          type: "field_type_not_supported",
+          message: `${segment} is not a supported field type`,
+        }], "Field type not supported");
+      }
     } else {
       return undefined; // Path does not exist or is not an object
     }

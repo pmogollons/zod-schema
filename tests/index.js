@@ -830,3 +830,65 @@ Tinytest.addAsync("extendWithSchema - Schema with union on nested field", async 
     test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
   }
 });
+
+Tinytest.addAsync("extendWithSchema - Schema optional array field", async (test) => {
+  const TestCollection = createTestCollection("optionalArrayField");
+  const schema = z.object({
+    id: z.string(),
+    completedProcesses: z
+      .array(z.object({
+        userId: z
+          .string()
+          .length(17, {
+            message: "El Id de usuario debe ser valido.",
+          })
+          .optional()
+          .describe("Usuario"),
+        processId: z
+          .string()
+          .length(17, {
+            message: "El Id del proceso debe ser valido.",
+          })
+          .describe("Proceso"),
+        status: z
+          .enum([
+            "PENDING",
+            "PROCESSING",
+            "COMPLETED",
+            "CANCELED",
+          ])
+          .describe("Estado"),
+        notes: z
+          .string()
+          .optional()
+          .describe("Notas"),
+      })).optional(),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({
+    id: "doc1",
+    completedProcesses: [
+      { userId: "12345678912345678", processId: "12345678912345678", status: "PENDING", notes: "Some notes" },
+    ],
+  });
+
+  const doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.completedProcesses.length, 1, "Should insert one completed process");
+  test.equal(doc.completedProcesses[0].userId, "12345678912345678", "Should insert user id");
+  test.equal(doc.completedProcesses[0].processId, "12345678912345678", "Should insert process id");
+  test.equal(doc.completedProcesses[0].status, "PENDING", "Should insert status");
+  test.equal(doc.completedProcesses[0].notes, "Some notes", "Should insert notes");
+
+  await TestCollection.updateAsync(
+    { _id: docId, "completedProcesses.processId": "12345678912345678" },
+    { $set: { "completedProcesses.$.status": "PROCESSING" } },
+  );
+  const doc2 = await TestCollection.findOneAsync(docId);
+  test.equal(doc2.completedProcesses.length, 1, "Should stay the same length");
+  test.equal(doc2.completedProcesses[0].userId, "12345678912345678", "Should stay the same user id");
+  test.equal(doc2.completedProcesses[0].processId, "12345678912345678", "Should stay the same process id");
+  test.equal(doc2.completedProcesses[0].status, "PROCESSING", "Should update to PROCESSING");
+  test.equal(doc2.completedProcesses[0].notes, "Some notes", "Should stay the same notes");
+});
