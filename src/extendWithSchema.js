@@ -201,6 +201,48 @@ writeMethods.forEach(methodName => {
                 }], "Invalid $unset operation");
               }
             });
+          } else if (key === "$pull") {
+            const fields = Object.keys(args[1][key]);
+
+            fields.forEach((field) => {
+              const fieldSchema = schemaFromPath(_schema, field);
+
+              // For nested fields, check if parent path exists
+              const parentPath = field.split(".").slice(0, -1).join(".");
+              if (parentPath) {
+                const parentSchema = schemaFromPath(_schema, parentPath);
+                checkFieldExists(parentSchema, parentPath);
+              }
+
+              checkFieldExists(fieldSchema, field);
+              checkFieldIsArray(fieldSchema, field);
+
+              if (fieldSchema instanceof z.ZodArray) {
+                try {
+                  // TODO: Handle $elemMatch operator
+                  if (args[1][key][field]?.$elemMatch) {
+                    return;
+                  }
+
+                  try {
+                    fieldSchema.element.parse(args[1][key][field]);
+                  } catch (e) {
+                    if (containsDollarKey(args[1][key][field])) {
+                      // TODO: Handle other operators inside $pull
+                      return;
+                    }
+
+                    throw e;
+                  }
+                } catch (e) {
+                  throw new ValidationError([{
+                    name: field,
+                    type: "invalid_pull_criteria",
+                    message: `Invalid $pull criteria for field "${field}". Criteria must match array element schema.`,
+                  }], "Invalid $pull operation");
+                }
+              }
+            });
           } else if (unsupportedOps.includes(key)) {
             // TODO: Support these operations
           } else {
@@ -328,4 +370,23 @@ function validateNestedFields(object, schema) {
   });
 
   return { validNestedFields, errors };
+}
+
+function containsDollarKey(obj) {
+  if (typeof obj !== "object" || obj === null) {
+    return false;
+  }
+
+  for (const key in obj) {
+    if (key.startsWith("$")) {
+      return true;
+    }
+
+    const value = obj[key];
+    if (typeof value === "object" && containsDollarKey(value)) {
+      return true;
+    }
+  }
+
+  return false;
 }

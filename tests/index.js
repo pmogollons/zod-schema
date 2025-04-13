@@ -939,3 +939,70 @@ Tinytest.addAsync("extendWithSchema - $unset", async (test) => {
   test.equal(doc2.age, 30, "Should stay the same age field");
   test.equal(doc2.meta, undefined, "Should unset meta field");
 });
+
+Tinytest.addAsync("extendWithSchema - $pull", async (test) => {
+  const TestCollection = createTestCollection("pullTest", true);
+  const schema = z.object({
+    name: z.string(),
+    age: z.number(),
+    tags: z.array(z.string()),
+    meta: z.object({
+      clicks: z.number(),
+      views: z.number(),
+      tags: z.array(z.object({ id: z.number(), name: z.string() })),
+    }),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({
+    name: "John",
+    age: 30,
+    tags: ["a", "b", "c"],
+    meta: {
+      clicks: 100,
+      views: 200,
+      tags: [{ id: 1, name: "a" }, { id: 2, name: "b" }, { id: 3, name: "c" }, { id: 4, name: "d" }, { id: 5, name: "e" }, { id: 6, name: "f" }],
+    },
+  });
+
+  await TestCollection.updateAsync(docId, { $pull: { tags: "a" } });
+  const doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.tags.length, 2, "2 items should remain");
+  test.equal(doc.tags[0], "b", "Tag b should remain");
+  test.equal(doc.tags[1], "c", "Tag c should remain");
+  test.equal(doc.age, 30, "Should stay the same age field");
+
+  try {
+    await TestCollection.updateAsync(docId, { $pull: { tags: { type: "string" } } });
+    test.fail("Should throw validation error for invalid pull criteria");
+  } catch (e) {
+    test.instanceOf(e, ValidationError, "Should throw ValidationError");
+    test.equal(e.details[0].name, "tags", "Should indicate which field failed");
+  }
+
+  await TestCollection.updateAsync(docId, { $pull: { "meta.tags": { id: 1, name: "a" } } });
+  const doc2 = await TestCollection.findOneAsync(docId);
+  test.equal(doc2.meta.tags.length, 5, "5 items should remain");
+  test.equal(doc2.meta.tags[0].id, 2, "Tag 2 should remain");
+  test.equal(doc2.meta.tags[1].id, 3, "Tag 3 should remain");
+  test.equal(doc2.meta.tags[2].id, 4, "Tag 4 should remain");
+  test.equal(doc2.meta.tags[3].id, 5, "Tag 5 should remain");
+  test.equal(doc2.meta.tags[4].id, 6, "Tag 6 should remain");
+  test.equal(doc2.age, 30, "Should stay the same age field");
+
+  try {
+    await TestCollection.updateAsync(docId, { $pull: { "meta.tags": "a" } });
+    test.fail("Should throw validation error for invalid pull criteria");
+  } catch (e) {
+    test.instanceOf(e, ValidationError, "Should throw ValidationError");
+    test.equal(e.details[0].name, "meta.tags", "Should indicate which field failed");
+  }
+
+  await TestCollection.updateAsync(docId, { $pull: { "meta.tags": { id: { $gt: 3 } } } });
+  const doc3 = await TestCollection.findOneAsync(docId);
+  test.equal(doc3.meta.tags.length, 2, "2 tags should remain");
+  test.equal(doc3.meta.tags[0].id, 2, "Tag 2 should remain");
+  test.equal(doc3.meta.tags[1].id, 3, "Tag 3 should remain");
+  test.equal(doc3.age, 30, "Should stay the same age field");
+});
