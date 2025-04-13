@@ -892,3 +892,50 @@ Tinytest.addAsync("extendWithSchema - Schema optional array field", async (test)
   test.equal(doc2.completedProcesses[0].status, "PROCESSING", "Should update to PROCESSING");
   test.equal(doc2.completedProcesses[0].notes, "Some notes", "Should stay the same notes");
 });
+
+Tinytest.addAsync("extendWithSchema - $unset", async (test) => {
+  const TestCollection = createTestCollection("unsetTest");
+  const schema = z.object({
+    name: z.string(),
+    age: z.number(),
+    meta: z.object({
+      clicks: z.number(),
+      views: z.number(),
+    }).optional(),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({
+    name: "John",
+    age: 30,
+    meta: { clicks: 100, views: 200 },
+  });
+
+  try {
+    await TestCollection.updateAsync(docId, { $unset: { "nonexistent": true } });
+    test.fail("Should throw validation error for nonexistent field");
+  } catch (e) {
+    test.instanceOf(e, ValidationError, "Should throw ValidationError");
+    test.equal(e.details[0].name, "nonexistent", "Should indicate which field failed");
+  }
+
+  try {
+    await TestCollection.updateAsync(docId, { $unset: { "meta.nonexistent": true } });
+    test.fail("Should throw validation error for nonexistent nested field");
+  } catch (e) {
+    test.instanceOf(e, ValidationError, "Should throw ValidationError");
+    test.equal(e.details[0].name, "meta.nonexistent", "Should indicate which nested field failed");
+  }
+
+  await TestCollection.updateAsync(docId, { $unset: { "meta.clicks": true } });
+  const doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.age, 30, "Should stay the same age field");
+  test.equal(doc.meta.clicks, undefined, "Should unset clicks field");
+  test.equal(doc.meta.views, 200, "Should stay the same views field");
+
+  await TestCollection.updateAsync(docId, { $unset: { meta: true } });
+  const doc2 = await TestCollection.findOneAsync(docId);
+  test.equal(doc2.age, 30, "Should stay the same age field");
+  test.equal(doc2.meta, undefined, "Should unset meta field");
+});

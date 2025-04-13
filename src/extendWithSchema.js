@@ -171,6 +171,36 @@ writeMethods.forEach(methodName => {
                 }], "Invalid array $pop operation");
               }
             });
+          } else if (key === "$unset") {
+            const fields = Object.keys(args[1][key]);
+
+            fields.forEach((field) => {
+              const fieldSchema = schemaFromPath(_schema, field);
+
+              // For nested fields, we need to check if the parent path exists
+              const parentPath = field.split(".").slice(0, -1).join(".");
+              if (parentPath) {
+                const parentSchema = schemaFromPath(_schema, parentPath);
+                checkFieldExists(parentSchema, parentPath);
+              }
+
+              checkFieldExists(fieldSchema, field);
+
+              // Validate that $unset values are empty strings or true (MongoDB accepts either)
+              const unsetSchema = z.object({
+                [field]: z.union([z.literal(""), z.literal(true)]),
+              });
+
+              try {
+                unsetSchema.parse(args[1][key]);
+              } catch (e) {
+                throw new ValidationError([{
+                  name: field,
+                  type: "invalid_unset_value",
+                  message: `Invalid $unset value for field "${field}". Value must be "" or true.`,
+                }], "Invalid $unset operation");
+              }
+            });
           } else if (unsupportedOps.includes(key)) {
             // TODO: Support these operations
           } else {

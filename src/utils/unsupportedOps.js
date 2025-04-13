@@ -3,7 +3,6 @@ export const unsupportedOps = [
   "$mul",
   "$min",
   "$max",
-  "$unset",
   "$rename",
   "$currentDate",
 
