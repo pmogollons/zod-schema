@@ -1046,7 +1046,7 @@ Tinytest.addAsync("extendWithSchema - $pullAll", async (test) => {
     test.instanceOf(e, ValidationError, "Should throw ValidationError");
     test.equal(e.details[0].name, "tags", "Should indicate which field failed");
   }
- 
+
   try {
     await TestCollection.updateAsync(docId, { $pullAll: { "meta.tags": { id: 1 } } });
     test.fail("Should throw validation error for invalid pullAll criteria");
