@@ -201,6 +201,44 @@ writeMethods.forEach(methodName => {
                 }], "Invalid $unset operation");
               }
             });
+          } else if (key === "$pullAll") {
+            const fields = Object.keys(args[1][key]);
+
+            fields.forEach((field) => {
+              const fieldSchema = schemaFromPath(_schema, field);
+
+              // For nested fields, check if parent path exists
+              const parentPath = field.split(".").slice(0, -1).join(".");
+              if (parentPath) {
+                const parentSchema = schemaFromPath(_schema, parentPath);
+                checkFieldExists(parentSchema, parentPath);
+              }
+
+              checkFieldExists(fieldSchema, field);
+              checkFieldIsArray(fieldSchema, field);
+
+              if (!Array.isArray(args[1][key][field])) {
+                throw new ValidationError([{
+                  name: field,
+                  type: "invalid_pullall_value",
+                  message: `Invalid $pullAll value for field "${field}". Value must be an array.`,
+                }], "Invalid $pullAll operation");
+              }
+
+              if (fieldSchema instanceof z.ZodArray) {
+                try {
+                  args[1][key][field].forEach((item) => {
+                    fieldSchema.element.parse(item);
+                  });
+                } catch (e) {
+                  throw new ValidationError([{
+                    name: field,
+                    type: "invalid_pullall_criteria",
+                    message: `Invalid $pullAll criteria for field "${field}". Each item must match array element schema.`,
+                  }], "Invalid $pullAll operation");
+                }
+              }
+            });
           } else if (key === "$pull") {
             const fields = Object.keys(args[1][key]);
 
@@ -223,9 +261,13 @@ writeMethods.forEach(methodName => {
                   if (args[1][key][field]?.$elemMatch) {
                     return;
                   }
-
+ 
                   try {
-                    fieldSchema.element.parse(args[1][key][field]);
+                    if (fieldSchema.element instanceof z.ZodObject) {
+                      fieldSchema.element.partial().parse(args[1][key][field]);
+                    } else {
+                      fieldSchema.element.parse(args[1][key][field]);
+                    }
                   } catch (e) {
                     if (containsDollarKey(args[1][key][field])) {
                       // TODO: Handle other operators inside $pull
