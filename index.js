@@ -1,6 +1,8 @@
+/* eslint @typescript-eslint/no-require-imports: 0 */
+
 try {
   if (require("zod")) {
-    import "./src/extendWithSchema";
+    require("./src/extendWithSchema");
   }
 } catch (e) {
   console.error("zod package not found. Without it, you can't use zod-schema package.");
