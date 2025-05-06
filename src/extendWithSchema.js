@@ -261,7 +261,7 @@ writeMethods.forEach(methodName => {
                   if (args[1][key][field]?.$elemMatch) {
                     return;
                   }
- 
+
                   try {
                     if (fieldSchema.element instanceof z.ZodObject) {
                       fieldSchema.element.partial().parse(args[1][key][field]);
@@ -373,7 +373,8 @@ function checkFieldExists(schema, field) {
 }
 
 function checkFieldIsArray(schema, field) {
-  const fieldIsArray = schema instanceof z.ZodArray;
+  const schemaToCheck = schema instanceof z.ZodDefault ? schema._def.innerType : schema;
+  const fieldIsArray = schemaToCheck instanceof z.ZodArray;
 
   if (!fieldIsArray) {
     throw new ValidationError([{

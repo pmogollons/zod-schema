@@ -1064,3 +1064,81 @@ Tinytest.addAsync("extendWithSchema - $pullAll", async (test) => {
   test.equal(doc3.meta.tags[3].id, 6, "Tag 6 should remain");
   test.equal(doc3.age, 30, "Should stay the same age field");
 });
+
+Tinytest.addAsync("extendWithSchema - $push with array of messages", async (test) => {
+  const TestCollection = createTestCollection("pushTest");
+  const schema = z.object({
+    name: z.string(),
+    messages: z.array(z.discriminatedUnion("type", [
+      z.object({
+        type: z.literal("text"),
+        text: z.string(),
+        timestamp: z.date(),
+      }),
+      z.object({
+        type: z.enum(["image", "audio", "video", "file"]),
+        url: z.string().optional(),
+        caption: z.string().optional(),
+        timestamp: z.date(),
+      }),
+    ])).default([]),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({
+    name: "John",
+    messages: [{
+      type: "text",
+      text: "Hello",
+      timestamp: new Date(),
+    }],
+  });
+
+  await TestCollection.updateAsync(docId, {
+    $push: {
+      messages: {
+        type: "text",
+        text: "World",
+        timestamp: new Date(),
+      },
+    },
+  });
+
+  const doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.messages.length, 2, "Should have 2 messages");
+  test.equal(doc.messages[1].text, "World", "Second message should be 'World'");
+  test.instanceOf(doc.messages[1].timestamp, Date, "Timestamp should be a Date");
+
+  try {
+    await TestCollection.updateAsync(docId, {
+      $push: {
+        messages: {
+          type: "text",
+          text: 123,
+          timestamp: new Date(),
+        },
+      },
+    });
+    test.fail("Should throw ValidationError for invalid message text");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].name, "text", "Error should be about the text field");
+  }
+
+  try {
+    await TestCollection.updateAsync(docId, {
+      $push: {
+        messages: {
+          type: "text",
+          text: "Invalid timestamp",
+          timestamp: "not a date",
+        },
+      },
+    });
+    test.fail("Should throw ValidationError for invalid timestamp");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].name, "timestamp", "Error should be about the timestamp field");
+  }
+});
