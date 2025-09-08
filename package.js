@@ -1,6 +1,6 @@
 Package.describe({
   name: "pmogollons:zod-schema",
-  version: "1.0.9",
+  version: "2.0.0",
   summary: "Meteor collection schema validation using zod",
   git: "https://github.com/pmogollons/zod-schema",
   documentation: "README.md",
@@ -24,7 +24,7 @@ Package.onTest(function (api) {
   api.use("pmogollons:zod-schema");
 
   Npm.depends({
-    "zod": "3.24.0",
+    "zod": "4.1.5",
   });
 
   api.use([

@@ -1,6 +1,6 @@
 {
   "name": "zod-schema",
-  "version": "1.0.9",
+  "version": "2.0.0",
   "description": "Meteor collection schema validation using zod",
   "scripts": {
     "test": "meteor test-packages ./ --driver-package test-in-browser --port 3420 --open",
@@ -16,6 +16,6 @@
     "globals": "^15.9.0",
     "typescript": "^5.5.4",
     "typescript-eslint": "^8.1.0",
-    "zod": "^3.23.8"
+    "zod": "^4.1.5"
   }
 }

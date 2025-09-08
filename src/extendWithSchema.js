@@ -113,12 +113,12 @@ writeMethods.forEach(methodName => {
       extendWithUser(args, { isUpsert, isUpdate });
     }
 
-    const schemaToCheck = isUpdate ? _schema.deepPartial() : _schema;
+    const schemaToCheck = isUpdate ? _schema.partial() : _schema;
 
     try {
       if (isUpsert) {
         if (args[1].$set) {
-          args[1].$set = _schema.deepPartial().parse(args[1].$set);
+          args[1].$set = _schema.partial().parse(args[1].$set);
         }
 
         if (args[1].$setOnInsert) {
@@ -135,7 +135,7 @@ writeMethods.forEach(methodName => {
               checkFieldExists(fieldSchema, field);
               checkFieldIsArray(fieldSchema, field);
 
-              const elementSchema = fieldSchema instanceof z.ZodArray ? fieldSchema.element : fieldSchema._def.innerType.element;
+              const elementSchema = fieldSchema instanceof z.ZodArray ? fieldSchema.element : (fieldSchema._zod?.def || fieldSchema._def).innerType.element;
 
               if (args[1][key][field]?.["$each"]) {
                 const schema = z.object({
@@ -373,7 +373,7 @@ function checkFieldExists(schema, field) {
 }
 
 function checkFieldIsArray(schema, field) {
-  const schemaToCheck = schema instanceof z.ZodDefault ? schema._def.innerType : schema;
+  const schemaToCheck = schema instanceof z.ZodDefault ? (schema._zod?.def || schema._def).innerType : schema;
   const fieldIsArray = schemaToCheck instanceof z.ZodArray;
 
   if (!fieldIsArray) {
