@@ -288,6 +288,8 @@ writeMethods.forEach(methodName => {
           } else if (unsupportedOps.includes(key)) {
             // TODO: Support these operations
           } else {
+            const oldSet = Object.assign({}, args[1][key]);
+
             const newValue = schemaToCheck.parse(args[1][key]);
             const { validNestedFields, errors } = validateNestedFields(args[1][key], _schema);
 
@@ -296,6 +298,12 @@ writeMethods.forEach(methodName => {
             }
 
             args[1][key] = Object.assign(newValue, validNestedFields);
+
+            Object.keys(args[1][key]).forEach((key2) => {
+              if (oldSet[key2] === undefined) {
+                delete args[1][key][key2];
+              }
+            });
           }
         });
       } else {
