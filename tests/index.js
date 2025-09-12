@@ -1142,3 +1142,134 @@ Tinytest.addAsync("extendWithSchema - $push with array of messages", async (test
     test.equal(error.details[0].name, "timestamp", "Error should be about the timestamp field");
   }
 });
+
+Tinytest.addAsync("extendWithSchema - dot notation $set operation issue", async (test) => {
+  const TestCollection = createTestCollection("dotNotationTest", true);
+
+  // Recreate the exact schema from the reported issue
+  const activityGpxSchema = z.object({
+    GPX: z.object({
+      type: z.string(),
+      features: z.array(
+        z.object({
+          type: z.string(),
+          properties: z.object({
+            time: z.string(),
+            coordinateProperties: z.object({
+              times: z.array(z.string()),
+              heart: z.array(z.number()),
+              segments: z.array(
+                z.object({
+                  index: z.number(),
+                  highway: z.string().nullable(),
+                  surface: z.string().nullable(),
+                  tracktype: z.string().nullable(),
+                  smoothness: z.string().nullable(),
+                }),
+              ).optional(),
+            }),
+          }),
+          geometry: z.object({
+            type: z.string(),
+            coordinates: z.array(z.array(z.number())),
+          }),
+        }),
+      ),
+    }),
+    isCorrectGpx: z.boolean(),
+  });
+
+  TestCollection.withSchema(activityGpxSchema);
+
+  // Insert initial document
+  const docId = await TestCollection.insertAsync({
+    GPX: {
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        properties: {
+          time: "2023-01-01T00:00:00Z",
+          coordinateProperties: {
+            times: ["2023-01-01T00:00:00Z"],
+            heart: [70],
+            segments: [{
+              index: 0,
+              highway: "primary",
+              surface: "asphalt",
+              tracktype: null,
+              smoothness: null,
+            }],
+          },
+        },
+        geometry: {
+          type: "LineString",
+          coordinates: [[0, 0], [1, 1], [2, 2]],
+        },
+      }],
+    },
+    isCorrectGpx: false,
+  });
+
+  // Test the previously problematic update operation that should now work
+  await TestCollection.updateAsync(
+    { _id: docId },
+    {
+      $set: {
+        "GPX.features.0.geometry.coordinates": [[0, 0], [1, 1], [2, 2], [3, 3]],
+        isCorrectGpx: true,
+      },
+    },
+  );
+
+  const fixedDoc = await TestCollection.findOneAsync(docId);
+  test.equal(fixedDoc.isCorrectGpx, true, "isCorrectGpx should be updated 1");
+  test.equal(fixedDoc.GPX.features[0].geometry.coordinates.length, 4, "Coordinates should be updated with dot notation");
+
+  // Test that invalid dot notation still fails validation
+  try {
+    await TestCollection.updateAsync(
+      { _id: docId },
+      {
+        $set: {
+          "GPX.features.0.geometry.coordinates": "invalid_coordinates", // Should be array of arrays
+          isCorrectGpx: false,
+        },
+      },
+    );
+    test.fail("Should throw ValidationError for invalid dot notation value");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].name, "GPX.features.0.geometry.coordinates", "Error should be about the dot notation field");
+  }
+
+  // Test that the same operation works with skipSchema: true
+  await TestCollection.updateAsync(
+    { _id: docId },
+    {
+      $set: {
+        "GPX.features.0.geometry.coordinates": [[0, 0], [1, 1], [2, 2], [3, 3]],
+        isCorrectGpx: true,
+      },
+    },
+    { skipSchema: true },
+  );
+
+  const updatedDoc = await TestCollection.findOneAsync(docId);
+  test.equal(updatedDoc.isCorrectGpx, true, "isCorrectGpx should be updated 2");
+  test.equal(updatedDoc.GPX.features[0].geometry.coordinates.length, 4, "Coordinates should be updated with skipSchema");
+
+  // Test that regular nested updates work fine
+  await TestCollection.updateAsync(
+    { _id: docId },
+    {
+      $set: {
+        "GPX.features.0.properties.time": "2023-01-01T01:00:00Z",
+        isCorrectGpx: false,
+      },
+    },
+  );
+
+  const regularUpdateDoc = await TestCollection.findOneAsync(docId);
+  test.equal(regularUpdateDoc.GPX.features[0].properties.time, "2023-01-01T01:00:00Z", "Regular nested update should work");
+  test.equal(regularUpdateDoc.isCorrectGpx, false, "isCorrectGpx should be updated 3");
+});

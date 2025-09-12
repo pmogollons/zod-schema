@@ -342,14 +342,18 @@ function schemaFromPath(schema, path) {
     if (currentSchema instanceof z.ZodObject) {
       currentSchema = currentSchema.shape[segment];
     } else if (currentSchema instanceof z.ZodArray) {
-      currentSchema = currentSchema.element.shape[segment];
+      if (!Number.isInteger(Number(segment))) {
+        currentSchema = currentSchema.element.shape[segment];
+      }
     } else if (currentSchema instanceof z.ZodOptional) {
       const unwrappedSchema = currentSchema.unwrap();
 
       if (unwrappedSchema instanceof z.ZodObject) {
         currentSchema = unwrappedSchema.shape[segment];
       } else if (unwrappedSchema instanceof z.ZodArray) {
-        currentSchema = unwrappedSchema.element.shape[segment];
+        if (!Number.isInteger(Number(segment))) {
+          currentSchema = unwrappedSchema.element.shape[segment];
+        }
       } else {
         throw new ValidationError([{
           name: segment,
