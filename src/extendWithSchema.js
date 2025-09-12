@@ -113,12 +113,12 @@ writeMethods.forEach(methodName => {
       extendWithUser(args, { isUpsert, isUpdate });
     }
 
-    const schemaToCheck = isUpdate ? _schema.partial() : _schema;
+    const schemaToCheck = isUpdate ? _schema.deepPartial?.() || _schema.partial() : _schema;
 
     try {
       if (isUpsert) {
         if (args[1].$set) {
-          args[1].$set = _schema.partial().parse(args[1].$set);
+          args[1].$set = (_schema.deepPartial?.() || _schema.partial()).parse(args[1].$set);
         }
 
         if (args[1].$setOnInsert) {
