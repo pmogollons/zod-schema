@@ -174,6 +174,107 @@ Tinytest.addAsync("extendWithSchema - updateAsync with dot notation", async (tes
   }
 });
 
+Tinytest.addAsync("extendWithSchema - dotted updates through nested wrappers", async (test) => {
+  const TestCollection = createTestCollection(`wrappedDotUpdate-${Random.id()}`, true);
+  const checklistSchema = z.object({
+    training: z.boolean().default(false),
+  });
+  const schema = z.object({
+    optionalDefault: checklistSchema.default({ training: false }).optional(),
+    defaultOptional: checklistSchema.optional().default({ training: false }),
+    defaulted: checklistSchema.default({ training: false }),
+    optional: checklistSchema.optional(),
+    nullable: checklistSchema.nullable().optional(),
+    caught: checklistSchema.catch({ training: false }).optional(),
+    readonly: checklistSchema.readonly().optional(),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({});
+  const wrappedFields = [
+    "optionalDefault",
+    "defaultOptional",
+    "defaulted",
+    "optional",
+    "nullable",
+    "caught",
+    "readonly",
+  ];
+
+  for (const field of wrappedFields) {
+    await TestCollection.updateAsync(docId, {
+      $set: { [`${field}.training`]: true },
+    });
+  }
+
+  const doc = await TestCollection.findOneAsync(docId);
+
+  wrappedFields.forEach((field) => {
+    test.isTrue(doc[field].training, `${field} should allow a dotted update`);
+  });
+
+  try {
+    await TestCollection.updateAsync(docId, {
+      $set: { "optionalDefault.training": "yes" },
+    });
+    test.fail("Should reject an invalid value through nested wrappers");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].name, "optionalDefault.training", "Error should include the full dotted path");
+  }
+
+  const invalidModifier = {
+    $set: { "optionalDefault.unknown": true },
+  };
+
+  try {
+    await TestCollection.updateAsync(docId, invalidModifier);
+    test.fail("Should reject an unknown dotted path");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].name, "optionalDefault.unknown", "Error should identify the unknown dotted path");
+    test.equal(error.details[0].type, "invalid_field", "Error should report an invalid field");
+  }
+
+  test.isTrue(
+    Object.prototype.hasOwnProperty.call(invalidModifier.$set, "optionalDefault.unknown"),
+    "Invalid dotted paths should not be removed from the modifier",
+  );
+});
+
+Tinytest.addAsync("extendWithSchema - dotted updates through wrapped object arrays", async (test) => {
+  const TestCollection = createTestCollection(`wrappedArrayDotUpdate-${Random.id()}`, true);
+  const schema = z.object({
+    items: z.array(z.object({
+      key: z.string(),
+      enabled: z.boolean(),
+    })).default([]).optional(),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({
+    items: [
+      { key: "first", enabled: false },
+      { key: "second", enabled: false },
+    ],
+  });
+
+  await TestCollection.updateAsync(docId, {
+    $set: { "items.0.enabled": true },
+  });
+  await TestCollection.updateAsync(
+    { _id: docId, "items.key": "second" },
+    { $set: { "items.$.enabled": true } },
+  );
+
+  const doc = await TestCollection.findOneAsync(docId);
+
+  test.isTrue(doc.items[0].enabled, "Numeric array paths should update through wrappers");
+  test.isTrue(doc.items[1].enabled, "Positional array paths should update through wrappers");
+});
+
 Tinytest.addAsync("extendWithSchema - removeAsync", async (test) => {
   const TestCollection = createTestCollection("test");
   const schema = z.object({
@@ -336,7 +437,15 @@ Tinytest.addAsync("extendWithSchema - schema validation with nested fields", asy
   test.equal(doc.profile.address.city, "Madrid", "City should be updated correctly. Madrid, really?");
   test.equal(doc.profile.address.country, "Spain", "Country should not be updated");
 
-  await TestCollection.updateAsync(docId, { $set: { "profile.address.miaw": "Madrid" } });
+  try {
+    await TestCollection.updateAsync(docId, { $set: { "profile.address.miaw": "Madrid" } });
+    test.fail("Should reject an unknown dotted path");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].name, "profile.address.miaw", "Error should identify the unknown dotted path");
+    test.equal(error.details[0].type, "invalid_field", "Error should report an invalid field");
+  }
+
   doc = await TestCollection.findOneAsync(docId);
   test.isUndefined(doc.profile.address.miaw, "Miaw should not be set");
 

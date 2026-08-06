@@ -142,9 +142,8 @@ writeMethods.forEach(methodName => {
               const fieldSchema = schemaFromPath(_schema, field);
 
               checkFieldExists(fieldSchema, field);
-              checkFieldIsArray(fieldSchema, field);
-
-              const elementSchema = fieldSchema instanceof z.ZodArray ? fieldSchema.element : (fieldSchema._zod?.def || fieldSchema._def).innerType.element;
+              const arraySchema = checkFieldIsArray(fieldSchema, field);
+              const elementSchema = arraySchema.element;
 
               if (args[1][key][field]?.["$each"]) {
                 const schema = z.object({
@@ -224,7 +223,7 @@ writeMethods.forEach(methodName => {
               }
 
               checkFieldExists(fieldSchema, field);
-              checkFieldIsArray(fieldSchema, field);
+              const arraySchema = checkFieldIsArray(fieldSchema, field);
 
               if (!Array.isArray(args[1][key][field])) {
                 throw new ValidationError([{
@@ -234,18 +233,16 @@ writeMethods.forEach(methodName => {
                 }], "Invalid $pullAll operation");
               }
 
-              if (fieldSchema instanceof z.ZodArray) {
-                try {
-                  args[1][key][field].forEach((item) => {
-                    fieldSchema.element.parse(item);
-                  });
-                } catch {
-                  throw new ValidationError([{
-                    name: field,
-                    type: "invalid_pullall_criteria",
-                    message: `Invalid $pullAll criteria for field "${field}". Each item must match array element schema.`,
-                  }], "Invalid $pullAll operation");
-                }
+              try {
+                args[1][key][field].forEach((item) => {
+                  arraySchema.element.parse(item);
+                });
+              } catch {
+                throw new ValidationError([{
+                  name: field,
+                  type: "invalid_pullall_criteria",
+                  message: `Invalid $pullAll criteria for field "${field}". Each item must match array element schema.`,
+                }], "Invalid $pullAll operation");
               }
             });
           } else if (key === "$pull") {
@@ -262,36 +259,34 @@ writeMethods.forEach(methodName => {
               }
 
               checkFieldExists(fieldSchema, field);
-              checkFieldIsArray(fieldSchema, field);
+              const arraySchema = checkFieldIsArray(fieldSchema, field);
 
-              if (fieldSchema instanceof z.ZodArray) {
+              try {
+                // TODO: Handle $elemMatch operator
+                if (args[1][key][field]?.$elemMatch) {
+                  return;
+                }
+
                 try {
-                  // TODO: Handle $elemMatch operator
-                  if (args[1][key][field]?.$elemMatch) {
+                  if (arraySchema.element instanceof z.ZodObject) {
+                    arraySchema.element.partial().parse(args[1][key][field]);
+                  } else {
+                    arraySchema.element.parse(args[1][key][field]);
+                  }
+                } catch (e) {
+                  if (containsDollarKey(args[1][key][field])) {
+                    // TODO: Handle other operators inside $pull
                     return;
                   }
 
-                  try {
-                    if (fieldSchema.element instanceof z.ZodObject) {
-                      fieldSchema.element.partial().parse(args[1][key][field]);
-                    } else {
-                      fieldSchema.element.parse(args[1][key][field]);
-                    }
-                  } catch (e) {
-                    if (containsDollarKey(args[1][key][field])) {
-                      // TODO: Handle other operators inside $pull
-                      return;
-                    }
-
-                    throw e;
-                  }
-                } catch {
-                  throw new ValidationError([{
-                    name: field,
-                    type: "invalid_pull_criteria",
-                    message: `Invalid $pull criteria for field "${field}". Criteria must match array element schema.`,
-                  }], "Invalid $pull operation");
+                  throw e;
                 }
+              } catch {
+                throw new ValidationError([{
+                  name: field,
+                  type: "invalid_pull_criteria",
+                  message: `Invalid $pull criteria for field "${field}". Criteria must match array element schema.`,
+                }], "Invalid $pull operation");
               }
             });
           } else if (unsupportedOps.includes(key)) {
@@ -325,46 +320,78 @@ writeMethods.forEach(methodName => {
 });
 
 
+const transparentWrapperTypes = [
+  z.ZodOptional,
+  z.ZodDefault,
+  z.ZodNullable,
+  z.ZodCatch,
+  z.ZodReadonly,
+].filter(Boolean);
+
+function unwrapForPathTraversal(schema) {
+  const visited = new Set();
+  let currentSchema = schema;
+
+  while (currentSchema && !visited.has(currentSchema)) {
+    visited.add(currentSchema);
+
+    const isTransparentWrapper = transparentWrapperTypes.some(
+      wrapperType => currentSchema instanceof wrapperType,
+    );
+
+    if (!isTransparentWrapper) {
+      break;
+    }
+
+    const innerSchema = typeof currentSchema.unwrap === "function"
+      ? currentSchema.unwrap()
+      : (currentSchema._zod?.def || currentSchema._def)?.innerType;
+
+    if (!innerSchema || innerSchema === currentSchema) {
+      break;
+    }
+
+    currentSchema = innerSchema;
+  }
+
+  return currentSchema;
+}
+
 function schemaFromPath(schema, path) {
-  path = path.replace(".$.", ".");
   const pathSegments = path.split(".");
 
   // Traverse the schema by following the path segments
   let currentSchema = schema;
 
   for (const segment of pathSegments) {
-    if (currentSchema instanceof z.ZodObject) {
-      currentSchema = currentSchema.shape[segment];
-    } else if (currentSchema instanceof z.ZodArray) {
-      if (!Number.isInteger(Number(segment))) {
-        currentSchema = currentSchema.element.shape[segment];
-      }
-    } else if (currentSchema instanceof z.ZodOptional) {
-      const unwrappedSchema = currentSchema.unwrap();
+    const schemaToTraverse = unwrapForPathTraversal(currentSchema);
 
-      if (unwrappedSchema instanceof z.ZodObject) {
-        currentSchema = unwrappedSchema.shape[segment];
-      } else if (unwrappedSchema instanceof z.ZodArray) {
-        if (!Number.isInteger(Number(segment))) {
-          currentSchema = unwrappedSchema.element.shape[segment];
-        }
+    if (schemaToTraverse instanceof z.ZodObject) {
+      currentSchema = schemaToTraverse.shape[segment];
+    } else if (schemaToTraverse instanceof z.ZodArray) {
+      const isArrayIndex = segment === "$" || /^\d+$/.test(segment);
+
+      if (isArrayIndex) {
+        currentSchema = schemaToTraverse.element;
       } else {
-        throw new ValidationError([{
-          name: segment,
-          type: "field_type_not_supported",
-          message: `${segment} is not a supported field type`,
-        }], "Field type not supported");
+        const elementSchema = unwrapForPathTraversal(schemaToTraverse.element);
+
+        if (!(elementSchema instanceof z.ZodObject)) {
+          return undefined;
+        }
+
+        currentSchema = elementSchema.shape[segment];
       }
     } else {
       return undefined; // Path does not exist or is not an object
     }
+
+    if (!currentSchema) {
+      return undefined;
+    }
   }
 
-  if (currentSchema instanceof z.ZodOptional) {
-    return currentSchema.unwrap();
-  }
-
-  // Check if the final field is an array
+  // Keep leaf wrappers so parsing retains their validation semantics.
   return currentSchema;
 }
 
@@ -379,7 +406,7 @@ function checkFieldExists(schema, field) {
 }
 
 function checkFieldIsArray(schema, field) {
-  const schemaToCheck = schema instanceof z.ZodDefault ? (schema._zod?.def || schema._def).innerType : schema;
+  const schemaToCheck = unwrapForPathTraversal(schema);
   const fieldIsArray = schemaToCheck instanceof z.ZodArray;
 
   if (!fieldIsArray) {
@@ -389,6 +416,8 @@ function checkFieldIsArray(schema, field) {
       message: `${field} is not a valid array`,
     }], "Invalid array field");
   }
+
+  return schemaToCheck;
 }
 
 function validateNestedFields(object, schema) {
@@ -400,6 +429,11 @@ function validateNestedFields(object, schema) {
     const nestedSchema = schemaFromPath(schema, field);
 
     if (!nestedSchema) {
+      errors.push({
+        name: field,
+        type: "invalid_field",
+        message: `${field} does not exist`,
+      });
       return;
     }
 
