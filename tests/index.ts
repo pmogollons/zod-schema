@@ -1500,3 +1500,81 @@ Tinytest.addAsync("extendWithSchema - dot notation $set operation issue", async 
   test.equal(regularUpdateDoc.GPX.features[0].properties.time, "2023-01-01T01:00:00Z", "Regular nested update should work");
   test.equal(regularUpdateDoc.isCorrectGpx, false, "isCorrectGpx should be updated 3");
 });
+
+Tinytest.addAsync("extendWithSchema - GPX coordinates update with numeric array path", async (test) => {
+  const TestCollection = createTestCollection(`activityGpxUpdate-${Random.id()}`, true);
+  const activityGpxSchema = z.object({
+    GPX: z.object({
+      type: z.string(),
+      features: z.array(
+        z.object({
+          type: z.string(),
+          properties: z.object({
+            time: z.string(),
+            coordinateProperties: z.object({
+              times: z.array(z.string()),
+              heart: z.array(z.number()),
+              segments: z.array(
+                z.object({
+                  index: z.number(),
+                  highway: z.string().nullable(),
+                  surface: z.string().nullable(),
+                  tracktype: z.string().nullable(),
+                  smoothness: z.string().nullable(),
+                }),
+              ).optional(),
+            }),
+          }),
+          geometry: z.object({
+            type: z.string(),
+            coordinates: z.array(z.array(z.number())),
+          }),
+        }),
+      ),
+    }),
+    isCorrectGpx: z.boolean(),
+  });
+
+  TestCollection.withSchema(activityGpxSchema);
+
+  const id = await TestCollection.insertAsync({
+    GPX: {
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        properties: {
+          time: "2023-01-01T00:00:00Z",
+          coordinateProperties: {
+            times: ["2023-01-01T00:00:00Z"],
+            heart: [70],
+          },
+        },
+        geometry: {
+          type: "LineString",
+          coordinates: [[0, 0], [1, 1]],
+        },
+      }],
+    },
+    isCorrectGpx: false,
+  });
+  const timeGpsData = [[10.1, 20.2], [30.3, 40.4], [50.5, 60.6]];
+
+  await TestCollection.updateAsync(
+    { _id: id },
+    {
+      $set: {
+        "GPX.features.0.geometry.coordinates": timeGpsData,
+        isCorrectGpx: true,
+      },
+    },
+  );
+
+  const updatedDoc = await TestCollection.findOneAsync(id);
+
+  test.equal(
+    updatedDoc.GPX.features[0].geometry.coordinates,
+    timeGpsData,
+    "Coordinates should exactly match the updated GPS data",
+  );
+  test.isTrue(updatedDoc.isCorrectGpx, "isCorrectGpx should be updated");
+});
