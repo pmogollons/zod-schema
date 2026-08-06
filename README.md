@@ -68,7 +68,6 @@ To use the `zod-schema` package in your Meteor project, follow these steps:
    ```
 
 ## Caveats
-* You can't use dot notation for nested fields on insert or upsert operations yet. Example { "meta.views": 1 }.
 * Not all mongo update operators are supported yet. This operations are not validated: ($inc, $mul, $rename, $min, $max, $currentDate, $, $[], $bit)
 * When using soft delete we add an isDeleted field, when querying the collection you should add the isDeleted: false filter when you want to get the not deleted documents.
 * If you are using `pmogollons:nova` any collection that uses soft delete will automatically add a `isDeleted` filter to the root collection of your query.

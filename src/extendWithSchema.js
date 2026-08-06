@@ -97,7 +97,8 @@ writeMethods.forEach(methodName => {
     }
 
     const isUpdate = ["update", "updateAsync"].includes(methodName);
-    const isUpsert = (isUpdate && (args[2]?.hasOwnProperty("upsert") || false) && args[2]["upsert"]);
+    const isUpsert = isUpdate && Object.prototype.hasOwnProperty.call(args[2] || {}, "upsert") && args[2]["upsert"];
+    const isReplacementUpsert = isUpsert && !isModifier(args[1]);
     const isUserServicesUpdate = isUpdate && _name === "users" && Object.keys(Object.values(args[1])[0])[0].split(".")[0] === "services";
 
     // If you do have a Meteor.users schema, then this prevents a check on Meteor.users.services updates that run periodically to resume login tokens and other things that don't need validation
@@ -106,23 +107,31 @@ writeMethods.forEach(methodName => {
     }
 
     if (_withDates) {
-      extendWithDates(args, { isUpsert, isUpdate });
+      extendWithDates(args, { isUpsert, isUpdate, isReplacementUpsert });
     }
 
     if (_withUser) {
-      extendWithUser(args, { isUpsert, isUpdate });
+      extendWithUser(args, { isUpsert, isUpdate, isReplacementUpsert });
     }
 
     const schemaToCheck = isUpdate ? _schema.deepPartial?.() || _schema.partial() : _schema;
 
     try {
       if (isUpsert) {
-        if (args[1].$set) {
-          args[1].$set = (_schema.deepPartial?.() || _schema.partial()).parse(args[1].$set);
-        }
+        if (isModifier(args[1])) {
+          if (args[1].$set) {
+            args[1].$set = parseModifierFields(
+              args[1].$set,
+              _schema,
+              _schema.deepPartial?.() || _schema.partial(),
+            );
+          }
 
-        if (args[1].$setOnInsert) {
-          args[1].$setOnInsert = _schema.partial().parse(args[1].$setOnInsert);
+          if (args[1].$setOnInsert) {
+            args[1].$setOnInsert = parseModifierFields(args[1].$setOnInsert, _schema, _schema.partial());
+          }
+        } else {
+          args[1] = _schema.parse(normalizeDottedDocument(args[1]));
         }
       } else if (isUpdate) {
         Object.keys(args[1]).forEach((key) => {
@@ -193,7 +202,7 @@ writeMethods.forEach(methodName => {
 
               try {
                 unsetSchema.parse(args[1][key]);
-              } catch (e) {
+              } catch {
                 throw new ValidationError([{
                   name: field,
                   type: "invalid_unset_value",
@@ -230,7 +239,7 @@ writeMethods.forEach(methodName => {
                   args[1][key][field].forEach((item) => {
                     fieldSchema.element.parse(item);
                   });
-                } catch (e) {
+                } catch {
                   throw new ValidationError([{
                     name: field,
                     type: "invalid_pullall_criteria",
@@ -276,7 +285,7 @@ writeMethods.forEach(methodName => {
 
                     throw e;
                   }
-                } catch (e) {
+                } catch {
                   throw new ValidationError([{
                     name: field,
                     type: "invalid_pull_criteria",
@@ -288,26 +297,11 @@ writeMethods.forEach(methodName => {
           } else if (unsupportedOps.includes(key)) {
             // TODO: Support these operations
           } else {
-            const oldSet = Object.assign({}, args[1][key]);
-
-            const newValue = schemaToCheck.parse(args[1][key]);
-            const { validNestedFields, errors } = validateNestedFields(args[1][key], _schema);
-
-            if (errors.length > 0) {
-              throw new ValidationError(errors, "Nested fields validation error");
-            }
-
-            args[1][key] = Object.assign(newValue, validNestedFields);
-
-            Object.keys(args[1][key]).forEach((key2) => {
-              if (oldSet[key2] === undefined) {
-                delete args[1][key][key2];
-              }
-            });
+            args[1][key] = parseModifierFields(args[1][key], _schema, schemaToCheck);
           }
         });
       } else {
-        args[0] = schemaToCheck.parse(args[0]);
+        args[0] = schemaToCheck.parse(normalizeDottedDocument(args[0]));
       }
     } catch (e) {
       if (e instanceof z.ZodError) {
@@ -425,6 +419,102 @@ function validateNestedFields(object, schema) {
   });
 
   return { validNestedFields, errors };
+}
+
+function parseModifierFields(fields, schema, schemaToCheck) {
+  const originalFields = Object.assign({}, fields);
+  const parsedFields = schemaToCheck.parse(fields);
+  const { validNestedFields, errors } = validateNestedFields(fields, schema);
+
+  if (errors.length > 0) {
+    throw new ValidationError(errors, "Nested fields validation error");
+  }
+
+  const result = Object.assign(parsedFields, validNestedFields);
+
+  Object.keys(result).forEach((field) => {
+    if (originalFields[field] === undefined) {
+      delete result[field];
+    }
+  });
+
+  return result;
+}
+
+function isModifier(document) {
+  return Object.keys(document).some(key => key.startsWith("$"));
+}
+
+function normalizeDottedDocument(document) {
+  const normalizedDocument = Object.create(null);
+  const dottedFields = [];
+  const createdContainers = new WeakSet();
+
+  Object.entries(document).forEach(([field, value]) => {
+    if (["__proto__", "prototype", "constructor"].includes(field)) {
+      throw new ValidationError([{
+        name: field,
+        type: "invalid_field",
+        message: `${field} is not a valid field`,
+      }], "Invalid field");
+    }
+
+    if (field.includes(".")) {
+      dottedFields.push([field, value]);
+    } else {
+      normalizedDocument[field] = value;
+    }
+  });
+
+  dottedFields.forEach(([field, value]) => {
+    const path = field.split(".");
+    let target = normalizedDocument;
+
+    path.forEach((segment, index) => {
+      if (!segment || ["__proto__", "prototype", "constructor"].includes(segment)) {
+        throw new ValidationError([{
+          name: field,
+          type: "invalid_field",
+          message: `${field} is not a valid nested field`,
+        }], "Invalid nested field");
+      }
+
+      const isLastSegment = index === path.length - 1;
+      const hasSegment = Object.prototype.hasOwnProperty.call(target, segment);
+
+      if (isLastSegment) {
+        if (hasSegment) {
+          throwNestedFieldConflict(field);
+        }
+
+        target[segment] = value;
+        return;
+      }
+
+      const nextContainer = Number.isInteger(Number(path[index + 1])) ? [] : {};
+
+      if (!hasSegment) {
+        target[segment] = nextContainer;
+        createdContainers.add(nextContainer);
+      } else if (!createdContainers.has(target[segment])) {
+        throwNestedFieldConflict(field);
+      } else if (Array.isArray(target[segment]) !== Array.isArray(nextContainer)) {
+        throwNestedFieldConflict(field);
+      }
+
+      target = target[segment];
+    });
+  });
+
+  return normalizedDocument;
+}
+
+function throwNestedFieldConflict(field) {
+  throw new ValidationError([{
+    name: field,
+    type: "conflicting_field",
+    message: `${field} conflicts with another field in the document`,
+  }], "Conflicting nested fields");
 }
 
 function containsDollarKey(obj) {

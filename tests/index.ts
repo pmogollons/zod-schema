@@ -86,6 +86,41 @@ Tinytest.addAsync("extendWithSchema - insertAsync with schema validation", async
   }
 });
 
+Tinytest.addAsync("extendWithSchema - insertAsync with dot notation", async (test) => {
+  const TestCollection = createTestCollection(`dotInsert-${Random.id()}`, true);
+  const schema = z.object({
+    name: z.string(),
+    meta: z.object({
+      views: z.number(),
+    }),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({ name: "John", "meta.views": 1 });
+  const doc = await TestCollection.findOneAsync(docId);
+
+  test.equal(doc.meta.views, 1, "Dotted field should be stored as a nested value");
+  test.isUndefined(doc["meta.views"], "Dotted field should not be stored literally");
+
+  try {
+    await TestCollection.insertAsync({ name: "Invalid", "meta.views": "not a number" });
+    test.fail("Should reject an invalid dotted field value");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].name, "meta.views", "Error should include the full dotted path");
+  }
+
+  try {
+    await TestCollection.insertAsync({ name: "Conflict", meta: { views: 1 }, "meta.views": 2 });
+    test.fail("Should reject conflicting nested field representations");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].name, "meta.views", "Error should identify the conflicting dotted path");
+    test.equal(error.details[0].type, "conflicting_field", "Error should identify a field conflict");
+  }
+});
+
 Tinytest.addAsync("extendWithSchema - updateAsync with schema validation", async (test) => {
   const TestCollection = createTestCollection("test");
   const schema = z.object({
@@ -106,6 +141,36 @@ Tinytest.addAsync("extendWithSchema - updateAsync with schema validation", async
     test.fail("Should throw an error for invalid data");
   } catch (error) {
     test.isTrue(error.message.includes("Collection schema validation error"), "Should throw a validation error");
+  }
+});
+
+Tinytest.addAsync("extendWithSchema - updateAsync with dot notation", async (test) => {
+  const TestCollection = createTestCollection(`dotUpdate-${Random.id()}`, true);
+  const schema = z.object({
+    name: z.string(),
+    meta: z.object({
+      views: z.number(),
+      messages: z.number(),
+    }),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({ name: "John", meta: { views: 1, messages: 3 } });
+
+  await TestCollection.updateAsync(docId, { $set: { "meta.views": 2 } });
+
+  const doc = await TestCollection.findOneAsync(docId);
+  test.equal(doc.meta.views, 2, "Dotted field should update the nested value");
+  test.equal(doc.meta.messages, 3, "Other notted fields should be unchanged");
+  test.isUndefined(doc["meta.views"], "Dotted field should not be stored literally");
+
+  try {
+    await TestCollection.updateAsync(docId, { $set: { "meta.views": "not a number" } });
+    test.fail("Should reject an invalid dotted update value");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].name, "meta.views", "Error should include the full dotted path");
   }
 });
 
@@ -321,6 +386,59 @@ Tinytest.addAsync("extendWithSchema - upsert with withDates", async (test) => {
   test.equal(updatedDoc.count, 2, "Count should be updated");
   test.equal(updatedDoc.createdAt.getTime(), doc.createdAt.getTime(), "createdAt should not change");
   test.isTrue(updatedDoc.updatedAt > doc.updatedAt, "updatedAt should be later than original");
+});
+
+Tinytest.addAsync("extendWithSchema - upsert with dot notation", async (test) => {
+  const directUpsertCollection = createTestCollection(`dotDirectUpsert-${Random.id()}`, true);
+  const updateUpsertCollection = createTestCollection(`dotUpdateUpsert-${Random.id()}`, true);
+  const replacementUpsertCollection = createTestCollection(`dotReplacementUpsert-${Random.id()}`, true);
+  const schema = z.object({
+    name: z.string(),
+    meta: z.object({
+      views: z.number(),
+      clicks: z.number(),
+    }),
+  });
+
+  directUpsertCollection.withSchema(schema);
+  updateUpsertCollection.withSchema(schema);
+  replacementUpsertCollection.withSchema(schema);
+
+  const directResult = await directUpsertCollection.upsertAsync(
+    { name: "Direct" },
+    { $set: { "meta.views": 1 }, $setOnInsert: { "meta.clicks": 2 } },
+  );
+  const directDoc = await directUpsertCollection.findOneAsync(directResult.insertedId);
+
+  test.equal(directDoc.meta, { views: 1, clicks: 2 }, "Direct upsert should preserve modifier dot notation");
+
+  await updateUpsertCollection.updateAsync(
+    { name: "Update" },
+    { $set: { "meta.views": 3 }, $setOnInsert: { "meta.clicks": 4 } },
+    { upsert: true },
+  );
+  const updateDoc = await updateUpsertCollection.findOneAsync({ name: "Update" });
+
+  test.equal(updateDoc.meta, { views: 3, clicks: 4 }, "Update with upsert should preserve modifier dot notation");
+
+  const replacementResult = await replacementUpsertCollection.upsertAsync(
+    { name: "Replacement" },
+    { name: "Replacement", "meta.views": 5, "meta.clicks": 6 },
+  );
+  const replacementDoc = await replacementUpsertCollection.findOneAsync(replacementResult.insertedId);
+
+  test.equal(replacementDoc.meta, { views: 5, clicks: 6 }, "Replacement upsert should store nested fields");
+
+  try {
+    await directUpsertCollection.upsertAsync(
+      { name: "Invalid" },
+      { $set: { "meta.views": "not a number" }, $setOnInsert: { "meta.clicks": 7 } },
+    );
+    test.fail("Should reject an invalid dotted upsert value");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Error should be a ValidationError");
+    test.equal(error.details[0].name, "meta.views", "Error should include the full dotted path");
+  }
 });
 
 Tinytest.addAsync("extendWithSchema - array operations", async (test) => {
@@ -1222,7 +1340,7 @@ Tinytest.addAsync("extendWithSchema - dot notation $set operation issue", async 
   );
 
   const fixedDoc = await TestCollection.findOneAsync(docId);
-  test.equal(fixedDoc.isCorrectGpx, true, "isCorrectGpx should be updated 1");
+  test.equal(fixedDoc.isCorrectGpx, true, "isCorrectGpx should be updated");
   test.equal(fixedDoc.GPX.features[0].geometry.coordinates.length, 4, "Coordinates should be updated with dot notation");
 
   // Test that invalid dot notation still fails validation

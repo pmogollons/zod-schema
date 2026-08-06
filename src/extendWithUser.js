@@ -1,4 +1,4 @@
-export function extendWithUser(args, { isUpsert, isUpdate } = {}) {
+export function extendWithUser(args, { isUpsert, isUpdate, isReplacementUpsert } = {}) {
   let userId;
 
   try {
@@ -11,7 +11,9 @@ export function extendWithUser(args, { isUpsert, isUpdate } = {}) {
     return;
   }
 
-  if (isUpsert) {
+  if (isReplacementUpsert) {
+    args[1].userId = userId;
+  } else if (isUpsert) {
     args[1]["$setOnInsert"] = args[1]["$setOnInsert"] || {};
     args[1]["$setOnInsert"].userId = userId;
   } else if (isUpdate) {

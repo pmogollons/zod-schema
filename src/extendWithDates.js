@@ -1,5 +1,8 @@
-export function extendWithDates(args, { isUpsert, isUpdate } = {}) {
-  if (isUpsert) {
+export function extendWithDates(args, { isUpsert, isUpdate, isReplacementUpsert } = {}) {
+  if (isReplacementUpsert) {
+    args[1].createdAt = new Date();
+    args[1].updatedAt = new Date();
+  } else if (isUpsert) {
     args[1]["$setOnInsert"] = args[1]["$setOnInsert"] || {};
     args[1]["$setOnInsert"].createdAt = new Date();
     args[1]["$setOnInsert"].updatedAt = new Date();

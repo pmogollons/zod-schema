@@ -35,5 +35,5 @@ Package.onTest(function (api) {
     "typescript",
   ]);
 
-  api.mainModule("tests/index.js", "server");
+  api.mainModule("tests/index.ts", "server");
 });
