@@ -1,10 +1,10 @@
 {
   "name": "zod-schema",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Meteor collection schema validation using zod",
   "scripts": {
     "test": "meteor test-packages ./ --driver-package test-in-browser --port 3420 --open",
-    "publish": "meteor publish --release=3.1"
+    "publish": "meteor publish --release=3.5"
   },
   "author": "pmogollons",
   "license": "MIT",
