@@ -368,6 +368,14 @@ function schemaFromPath(schema, path) {
 
     if (schemaToTraverse instanceof z.ZodObject) {
       currentSchema = schemaToTraverse.shape[segment];
+    } else if (schemaToTraverse instanceof z.ZodRecord) {
+      const keyResult = schemaToTraverse.keyType.safeParse(segment);
+
+      if (!keyResult.success) {
+        return undefined;
+      }
+
+      currentSchema = schemaToTraverse.valueType;
     } else if (schemaToTraverse instanceof z.ZodArray) {
       const isArrayIndex = segment === "$" || /^\d+$/.test(segment);
 
@@ -382,6 +390,12 @@ function schemaFromPath(schema, path) {
 
         currentSchema = elementSchema.shape[segment];
       }
+    } else if (
+      schemaToTraverse instanceof z.ZodUnknown
+      || schemaToTraverse instanceof z.ZodAny
+    ) {
+      // Unknown and any record values permit arbitrary deeper dotted paths.
+      currentSchema = schemaToTraverse;
     } else {
       return undefined; // Path does not exist or is not an object
     }

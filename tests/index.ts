@@ -243,6 +243,241 @@ Tinytest.addAsync("extendWithSchema - dotted updates through nested wrappers", a
   );
 });
 
+Tinytest.addAsync("extendWithSchema - multi-level dotted validation", async (test) => {
+  const assemblySchema = z.object({
+    general: z.number(),
+  });
+  const wrappedAssemblySchema = assemblySchema
+    .readonly()
+    .optional()
+    .default({ general: 0 });
+  const plainRatingsSchema = z.object({
+    assembly: assemblySchema,
+  });
+  const wrappedInnerRatingsSchema = z.object({
+    assembly: wrappedAssemblySchema,
+  });
+  const schemaVariants = [
+    {
+      name: "plain",
+      schema: z.object({ ratings: plainRatingsSchema }),
+    },
+    {
+      name: "wrapped",
+      schema: z.object({
+        ratings: wrappedInnerRatingsSchema
+          .readonly()
+          .optional()
+          .default({ assembly: { general: 0 } }),
+      }),
+    },
+    {
+      name: "wrapped-outer",
+      schema: z.object({
+        ratings: plainRatingsSchema
+          .readonly()
+          .optional()
+          .default({ assembly: { general: 0 } }),
+      }),
+    },
+    {
+      name: "wrapped-inner",
+      schema: z.object({ ratings: wrappedInnerRatingsSchema }),
+    },
+  ];
+
+  for (const { name, schema } of schemaVariants) {
+    const TestCollection = createTestCollection(`multiLevelDot-${name}-${Random.id()}`, true);
+
+    TestCollection.withSchema(schema);
+
+    const docId = await TestCollection.insertAsync({
+      "ratings.assembly.general": 5,
+    });
+    let doc = await TestCollection.findOneAsync(docId);
+
+    test.equal(doc.ratings.assembly.general, 5, `${name} dotted insert should store a nested value`);
+    test.isUndefined(
+      doc["ratings.assembly.general"],
+      `${name} dotted insert should not store the literal dotted field`,
+    );
+
+    await TestCollection.updateAsync(docId, {
+      $set: { "ratings.assembly.general": 6 },
+    });
+    doc = await TestCollection.findOneAsync(docId);
+
+    test.equal(doc.ratings.assembly.general, 6, `${name} dotted update should store a nested value`);
+
+    try {
+      await TestCollection.insertAsync({
+        "ratings.assembly.general": "not a number",
+      });
+      test.fail(`${name} should reject an invalid dotted insert value`);
+    } catch (error) {
+      test.isTrue(ValidationError.is(error), `${name} insert error should be a ValidationError`);
+      test.equal(
+        error.details[0].name,
+        "ratings.assembly.general",
+        `${name} insert error should include the full dotted path`,
+      );
+    }
+
+    try {
+      await TestCollection.updateAsync(docId, {
+        $set: { "ratings.assembly.general": "not a number" },
+      });
+      test.fail(`${name} should reject an invalid dotted update value`);
+    } catch (error) {
+      test.isTrue(ValidationError.is(error), `${name} update error should be a ValidationError`);
+      test.equal(
+        error.details[0].name,
+        "ratings.assembly.general",
+        `${name} update error should include the full dotted path`,
+      );
+    }
+
+    try {
+      await TestCollection.updateAsync(docId, {
+        $set: { "ratings.assembly.unknown": 7 },
+      });
+      test.fail(`${name} should reject an unknown dotted path`);
+    } catch (error) {
+      test.isTrue(ValidationError.is(error), `${name} unknown-path error should be a ValidationError`);
+      test.equal(
+        error.details[0].name,
+        "ratings.assembly.unknown",
+        `${name} unknown-path error should include the full dotted path`,
+      );
+      test.equal(error.details[0].type, "invalid_field", `${name} should report an invalid field`);
+    }
+  }
+});
+
+Tinytest.addAsync("extendWithSchema - nested record validation", async (test) => {
+  const insertCollection = createTestCollection(`recordInsert-${Random.id()}`, true);
+  const updateCollection = createTestCollection(`recordUpdate-${Random.id()}`, true);
+  const upsertCollection = createTestCollection(`recordUpsert-${Random.id()}`, true);
+  const schema = z.object({
+    type: z.literal("ASSEMBLY_ASSISTANT"),
+    assemblyAssistantId: z.string(),
+    ratings: z.record(z.string(), z.unknown()),
+  });
+
+  insertCollection.withSchema(schema);
+  updateCollection.withSchema(schema);
+  upsertCollection.withSchema(schema);
+
+  const insertId = await insertCollection.insertAsync({
+    type: "ASSEMBLY_ASSISTANT",
+    assemblyAssistantId: "insert-assistant",
+    ratings: { assembly: { general: 3 } },
+  });
+  const insertedDoc = await insertCollection.findOneAsync(insertId);
+
+  test.equal(insertedDoc.ratings.assembly.general, 3, "Insert should store a nested record value");
+
+  const dottedInsertId = await insertCollection.insertAsync({
+    type: "ASSEMBLY_ASSISTANT",
+    assemblyAssistantId: "dotted-insert-assistant",
+    "ratings.assembly.general": 4,
+  });
+  const dottedInsertedDoc = await insertCollection.findOneAsync(dottedInsertId);
+
+  test.equal(
+    dottedInsertedDoc.ratings.assembly.general,
+    4,
+    "Dotted insert should work through an unknown record value",
+  );
+  test.isUndefined(
+    dottedInsertedDoc["ratings.assembly.general"],
+    "Dotted record fields should not be stored literally",
+  );
+
+  const updateId = await updateCollection.insertAsync({
+    type: "ASSEMBLY_ASSISTANT",
+    assemblyAssistantId: "update-assistant",
+    ratings: { assembly: { general: 3 } },
+  });
+
+  await updateCollection.updateAsync(updateId, {
+    $set: {
+      ratings: { assembly: { general: 4 } },
+    },
+  });
+
+  let updatedDoc = await updateCollection.findOneAsync(updateId);
+
+  test.equal(updatedDoc.ratings.assembly.general, 4, "Update should store a nested record value");
+
+  await updateCollection.updateAsync(updateId, {
+    $set: {
+      "ratings.assembly.general": 5,
+    },
+  });
+
+  updatedDoc = await updateCollection.findOneAsync(updateId);
+
+  test.equal(updatedDoc.ratings.assembly.general, 5, "Dotted update should work through an unknown record value");
+
+  const upsertResult = await upsertCollection.upsertAsync(
+    { type: "ASSEMBLY_ASSISTANT", assemblyAssistantId: "upsert-assistant" },
+    {
+      $set: {
+        ratings: { assembly: { general: 6 } },
+      },
+    },
+  );
+  let upsertedDoc = await upsertCollection.findOneAsync(upsertResult.insertedId);
+
+  test.equal(upsertedDoc.ratings.assembly.general, 6, "Upsert should insert a nested record value");
+
+  await upsertCollection.upsertAsync(
+    { type: "ASSEMBLY_ASSISTANT", assemblyAssistantId: "upsert-assistant" },
+    {
+      $set: {
+        ratings: { assembly: { general: 7 } },
+      },
+    },
+  );
+  upsertedDoc = await upsertCollection.findOneAsync(upsertResult.insertedId);
+
+  test.equal(upsertedDoc.ratings.assembly.general, 7, "Upsert should update a nested record value");
+});
+
+Tinytest.addAsync("extendWithSchema - typed nested record validation", async (test) => {
+  const TestCollection = createTestCollection(`typedRecordUpdate-${Random.id()}`, true);
+  const schema = z.object({
+    ratings: z.record(z.string(), z.object({
+      general: z.number(),
+    })),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({
+    ratings: { assembly: { general: 3 } },
+  });
+
+  await TestCollection.updateAsync(docId, {
+    $set: { "ratings.assembly.general": 4 },
+  });
+
+  try {
+    await TestCollection.updateAsync(docId, {
+      $set: { "ratings.assembly.general": "not a number" },
+    });
+    test.fail("Should reject an invalid typed record value");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Typed record error should be a ValidationError");
+    test.equal(
+      error.details[0].name,
+      "ratings.assembly.general",
+      "Typed record error should include the full dotted path",
+    );
+  }
+});
+
 Tinytest.addAsync("extendWithSchema - dotted updates through wrapped object arrays", async (test) => {
   const TestCollection = createTestCollection(`wrappedArrayDotUpdate-${Random.id()}`, true);
   const schema = z.object({
