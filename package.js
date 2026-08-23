@@ -1,6 +1,6 @@
 Package.describe({
   name: "pmogollons:zod-schema",
-  version: "2.0.5",
+  version: "2.0.6",
   summary: "Meteor collection schema validation using zod",
   git: "https://github.com/pmogollons/zod-schema",
   documentation: "README.md",
