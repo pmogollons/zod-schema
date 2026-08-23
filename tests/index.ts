@@ -4,6 +4,7 @@ import { Random } from "meteor/random";
 import { Tinytest } from "meteor/tinytest";
 
 import { ValidationError } from "../src/ValidationError";
+import "./types";
 
 
 // Helper function to create a test collection
