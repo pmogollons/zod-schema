@@ -24,7 +24,7 @@ Package.onTest(function (api) {
   api.use("pmogollons:zod-schema");
 
   Npm.depends({
-    "zod": "4.1.5",
+    "zod": "4.4.3",
   });
 
   api.use([
