@@ -1060,6 +1060,35 @@ Tinytest.addAsync("extendWithSchema - withUser", async (test) => {
 });
 
 
+Tinytest.addAsync("extendWithSchema - withUser optional", async (test) => {
+  const TestCollection = createTestCollection("test");
+  const schema = z.object({
+    name: z.string(),
+  });
+
+  TestCollection.withSchema(schema).withUser({ optional: true });
+
+  const originalUserId = Meteor.userId;
+
+  try {
+    Meteor.userId = () => null;
+
+    const anonymousId = await TestCollection.insertAsync({ name: "Anonymous" });
+    const anonymousDoc = await TestCollection.findOneAsync(anonymousId);
+    test.isUndefined(anonymousDoc.userId, "userId should be optional without a user context");
+
+    const mockUserId = Random.id();
+    Meteor.userId = () => mockUserId;
+
+    const authenticatedId = await TestCollection.insertAsync({ name: "Alice" });
+    const authenticatedDoc = await TestCollection.findOneAsync(authenticatedId);
+    test.equal(authenticatedDoc.userId, mockUserId, "userId should be set when a user context exists");
+  } finally {
+    Meteor.userId = originalUserId;
+  }
+});
+
+
 Tinytest.addAsync("extendWithSchema - $inc", async (test) => {
   const TestCollection = createTestCollection("test");
   const schema = z.object({

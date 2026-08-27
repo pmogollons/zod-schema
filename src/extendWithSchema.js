@@ -12,6 +12,7 @@ const writeMethods = ["insertAsync", "updateAsync", "upsertAsync"];
 
 Object.assign(Mongo.Collection.prototype, {
   _schema: null,
+  _withUser: false,
   _withDates: false,
   _softDelete: false,
   withSchema(schema) {
@@ -19,12 +20,18 @@ Object.assign(Mongo.Collection.prototype, {
 
     return this;
   },
-  withUser() {
+  withUser({ optional = false } = {}) {
     this._withUser = true;
 
-    this._schema = this._schema.extend({
-      userId: z.string().length(17),
-    });
+    if (optional) {
+      this._schema = this._schema.extend({
+        userId: z.string().length(17).optional(),
+      });
+    } else {
+      this._schema = this._schema.extend({
+        userId: z.string().length(17),
+      });
+    }
 
     return this;
   },
