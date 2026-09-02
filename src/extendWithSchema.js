@@ -89,8 +89,8 @@ Object.assign(Mongo.Collection.prototype, {
 writeMethods.forEach(methodName => {
   const method = Mongo.Collection.prototype[methodName];
 
-  Mongo.Collection.prototype[methodName] = function(...args) {
-    const options = args[args.length - 1];
+  Mongo.Collection.prototype[methodName] = async function(...args) {
+    const options = args[methodName === "insertAsync" ? 1 : 2];
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const collection = this;
     const { _name, _schema, _withUser, _withDates } = collection;
@@ -113,12 +113,16 @@ writeMethods.forEach(methodName => {
       return method.apply(collection, args);
     }
 
+    const existingDocument = isReplacementUpsert && (_withDates || _withUser)
+      ? await collection.findOneAsync(args[0])
+      : undefined;
+
     if (_withDates) {
-      extendWithDates(args, { isUpsert, isUpdate, isReplacementUpsert });
+      extendWithDates(args, { isUpsert, isUpdate, isReplacementUpsert, existingDocument });
     }
 
     if (_withUser) {
-      extendWithUser(args, { isUpsert, isUpdate, isReplacementUpsert });
+      extendWithUser(args, { isUpsert, isUpdate, isReplacementUpsert, existingDocument });
     }
 
     const schemaToCheck = isUpdate ? _schema.deepPartial?.() || _schema.partial() : _schema;
@@ -153,16 +157,20 @@ writeMethods.forEach(methodName => {
               const elementSchema = arraySchema.element;
 
               if (args[1][key][field]?.["$each"]) {
-                const schema = z.object({
-                  $each: fieldSchema,
-                  $position: z.number().int().optional(),
-                  $slice: z.number().int().optional(),
-                  $sort: z.union([
-                    z.record(z.string(), z.union([z.literal(1), z.literal(-1)])),
-                    z.literal(1),
-                    z.literal(-1),
-                  ]).optional(),
-                });
+                const schema = key === "$addToSet"
+                  ? z.object({
+                    $each: fieldSchema,
+                  }).strict()
+                  : z.object({
+                    $each: fieldSchema,
+                    $position: z.number().int().optional(),
+                    $slice: z.number().int().optional(),
+                    $sort: z.union([
+                      z.record(z.string(), z.union([z.literal(1), z.literal(-1)])),
+                      z.literal(1),
+                      z.literal(-1),
+                    ]).optional(),
+                  });
 
                 args[1][key][field] = schema.parse(args[1][key][field]);
               } else {

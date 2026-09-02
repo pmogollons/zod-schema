@@ -1,10 +1,25 @@
-export function extendWithUser(args, { isUpsert, isUpdate, isReplacementUpsert } = {}) {
+export function extendWithUser(args, {
+  isUpsert,
+  isUpdate,
+  isReplacementUpsert,
+  existingDocument,
+} = {}) {
   let userId;
 
   try {
     userId = Meteor.userId();
   } catch {
     // no userId in context
+  }
+
+  if (isReplacementUpsert && existingDocument) {
+    if (Object.prototype.hasOwnProperty.call(existingDocument, "userId")) {
+      args[1].userId = existingDocument.userId;
+    } else {
+      delete args[1].userId;
+    }
+
+    return;
   }
 
   if (!userId) {

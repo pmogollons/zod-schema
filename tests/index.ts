@@ -1847,3 +1847,493 @@ Tinytest.addAsync("extendWithSchema - GPX coordinates update with numeric array 
   );
   test.isTrue(updatedDoc.isCorrectGpx, "isCorrectGpx should be updated");
 });
+
+Tinytest.addAsync("extendWithSchema - distinguishes documents from skipSchema options", async (test) => {
+  const TestCollection = createTestCollection(`skipSchemaBoundary-${Random.id()}`, true);
+  const schema = z.object({
+    name: z.string(),
+    age: z.number(),
+    skipSchema: z.boolean().optional(),
+  });
+
+  TestCollection.withSchema(schema);
+
+  try {
+    await TestCollection.insertAsync({
+      name: "Invalid document option boundary",
+      age: "not a number",
+      skipSchema: true,
+    });
+    test.fail("A document field named skipSchema must not disable validation");
+  } catch (error) {
+    test.isTrue(ValidationError.is(error), "Invalid document data should throw ValidationError");
+    test.equal(error.details[0].name, "age", "Validation should still inspect the document age");
+  }
+
+  const skippedId = await TestCollection.insertAsync(
+    { name: "Explicitly skipped", age: "still not a number", skipSchema: false },
+    { skipSchema: true },
+  );
+  const skippedDoc = await TestCollection.findOneAsync(skippedId);
+
+  test.equal(skippedDoc.age, "still not a number", "The explicit mutation option should bypass validation");
+  test.isFalse(skippedDoc.skipSchema, "The document field should remain ordinary stored data");
+});
+
+Tinytest.addAsync("extendWithSchema - passes through collections without a schema", async (test) => {
+  const TestCollection = createTestCollection(`noSchema-${Random.id()}`, true);
+
+  const docId = await TestCollection.insertAsync({
+    name: 123,
+    arbitrary: { nested: true },
+  });
+
+  await TestCollection.updateAsync(docId, {
+    $set: {
+      name: false,
+      "arbitrary.extra": "allowed",
+    },
+  });
+
+  const doc = await TestCollection.findOneAsync(docId);
+
+  test.isFalse(doc.name, "A collection without withSchema should retain native insert/update behavior");
+  test.equal(doc.arbitrary, { nested: true, extra: "allowed" }, "Nested native updates should pass through");
+});
+
+Tinytest.addAsync("extendWithSchema - stores transformed values for writes", async (test) => {
+  const TestCollection = createTestCollection(`transformedWrites-${Random.id()}`, true);
+  const trimmedString = z.string().transform(value => value.trim());
+  const schema = z.object({
+    name: trimmedString,
+    count: z.coerce.number(),
+    tags: z.array(trimmedString),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({
+    name: "  inserted  ",
+    count: "1",
+    tags: [" first "],
+  });
+
+  await TestCollection.updateAsync(docId, {
+    $set: { name: "  updated  ", count: "2" },
+    $push: { tags: " second " },
+  });
+  await TestCollection.updateAsync(docId, {
+    $addToSet: { tags: { $each: [" third ", " fourth "] } },
+  });
+
+  const doc = await TestCollection.findOneAsync(docId);
+
+  test.equal(doc.name, "updated", "Transforms should be stored for $set values");
+  test.equal(doc.count, 2, "Coercions should be stored for insert and $set values");
+  test.equal(doc.tags, ["first", "second", "third", "fourth"], "Array element transforms should be stored");
+});
+
+Tinytest.addAsync("extendWithSchema - $addToSet and $each validation", async (test) => {
+  const TestCollection = createTestCollection(`addToSet-${Random.id()}`, true);
+  const schema = z.object({
+    tags: z.array(z.string()),
+    members: z.array(z.object({
+      id: z.number(),
+      name: z.string(),
+    })),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({
+    tags: ["first"],
+    members: [{ id: 1, name: "Alice" }],
+  });
+
+  await TestCollection.updateAsync(docId, { $addToSet: { tags: "second" } });
+  await TestCollection.updateAsync(docId, { $addToSet: { tags: "second" } });
+  await TestCollection.updateAsync(docId, {
+    $addToSet: {
+      members: { $each: [{ id: 2, name: "Bob", ignored: true }, { id: 3, name: "Carol" }] },
+    },
+  });
+
+  const doc = await TestCollection.findOneAsync(docId);
+
+  test.equal(doc.tags, ["first", "second"], "$addToSet should retain set semantics");
+  test.equal(
+    doc.members,
+    [{ id: 1, name: "Alice" }, { id: 2, name: "Bob" }, { id: 3, name: "Carol" }],
+    "$each entries should be parsed through the array element schema",
+  );
+
+  const invalidCases = [
+    {
+      name: "wrong scalar element",
+      modifier: { $addToSet: { tags: 4 } },
+    },
+    {
+      name: "invalid object in $each",
+      modifier: { $addToSet: { members: { $each: [{ id: "4", name: "Invalid" }] } } },
+    },
+    {
+      name: "invalid $position type",
+      modifier: { $push: { tags: { $each: ["third"], $position: "start" } } },
+    },
+    {
+      name: "invalid $slice type",
+      modifier: { $push: { tags: { $each: ["third"], $slice: "all" } } },
+    },
+    {
+      name: "invalid $sort direction",
+      modifier: { $push: { tags: { $each: ["third"], $sort: 2 } } },
+    },
+  ];
+
+  for (const { name, modifier } of invalidCases) {
+    try {
+      await TestCollection.updateAsync(docId, modifier);
+      test.fail(`${name} should be rejected`);
+    } catch (error) {
+      test.isTrue(ValidationError.is(error), `${name} should throw ValidationError`);
+    }
+  }
+});
+
+Tinytest.addAsync("extendWithSchema - rejects unsupported $addToSet modifiers", async (test) => {
+  const TestCollection = createTestCollection(`addToSetModifiers-${Random.id()}`, true);
+  const schema = z.object({ tags: z.array(z.string()) });
+
+  TestCollection.withSchema(schema);
+  const docId = await TestCollection.insertAsync({ tags: ["first"] });
+
+  for (const [option, value] of [["$position", 0], ["$slice", 1], ["$sort", 1]]) {
+    try {
+      await TestCollection.updateAsync(docId, {
+        $addToSet: { tags: { $each: ["second"], [option]: value } },
+      });
+      test.fail(`$addToSet ${option} should be rejected before reaching MongoDB`);
+    } catch (error) {
+      test.isTrue(ValidationError.is(error), `$addToSet ${option} should throw ValidationError`);
+    }
+  }
+});
+
+Tinytest.addAsync("extendWithSchema - modifier validation edge cases", async (test) => {
+  const TestCollection = createTestCollection(`modifierEdges-${Random.id()}`, true);
+  const schema = z.object({
+    name: z.string(),
+    tags: z.array(z.string()).optional(),
+    meta: z.object({
+      scores: z.array(z.number()).optional(),
+    }).optional(),
+  });
+
+  TestCollection.withSchema(schema);
+  const docId = await TestCollection.insertAsync({
+    name: "Edges",
+    tags: ["a", "b", "c"],
+    meta: { scores: [1, 2, 3] },
+  });
+
+  for (const marker of [false, 0, "invalid", null]) {
+    try {
+      await TestCollection.updateAsync(docId, { $unset: { name: marker } });
+      test.fail(`$unset marker ${String(marker)} should be rejected`);
+    } catch (error) {
+      test.isTrue(ValidationError.is(error), "Invalid $unset markers should throw ValidationError");
+      test.equal(error.details[0].type, "invalid_unset_value", "The error should identify the marker");
+    }
+  }
+
+  const invalidPullAllCases = [
+    {
+      name: "wrong element type",
+      field: "tags",
+      value: [1],
+      type: "invalid_pullall_criteria",
+    },
+    {
+      name: "unknown field",
+      field: "unknown",
+      value: ["a"],
+      type: "invalid_field",
+    },
+    {
+      name: "non-array field",
+      field: "name",
+      value: ["Edges"],
+      type: "invalid_array_field",
+    },
+  ];
+
+  for (const { name, field, value, type } of invalidPullAllCases) {
+    try {
+      await TestCollection.updateAsync(docId, { $pullAll: { [field]: value } });
+      test.fail(`${name} should be rejected by $pullAll validation`);
+    } catch (error) {
+      test.isTrue(ValidationError.is(error), `${name} should throw ValidationError`);
+      test.equal(error.details[0].type, type, `${name} should report ${type}`);
+    }
+  }
+
+  await TestCollection.updateAsync(docId, { $pullAll: { "meta.scores": [2] } });
+  await TestCollection.updateAsync(docId, { $pop: { tags: -1 } });
+  const doc = await TestCollection.findOneAsync(docId);
+
+  test.equal(doc.meta.scores, [1, 3], "$pullAll should traverse wrapped nested arrays");
+  test.equal(doc.tags, ["b", "c"], "$pop should traverse wrapped optional arrays");
+});
+
+Tinytest.addAsync("extendWithSchema - rejects unsafe and conflicting dotted inserts", async (test) => {
+  const TestCollection = createTestCollection(`unsafeDots-${Random.id()}`, true);
+  const schema = z.object({
+    profile: z.object({ name: z.string() }),
+  });
+
+  TestCollection.withSchema(schema);
+
+  const invalidDocuments = [
+    {
+      name: "empty path segment",
+      document: { "profile..name": "Alice" },
+      errorType: "invalid_field",
+    },
+    {
+      name: "nested __proto__ segment",
+      document: { "profile.__proto__.polluted": true },
+      errorType: "invalid_field",
+    },
+    {
+      name: "constructor prototype path",
+      document: { "constructor.prototype.polluted": true },
+      errorType: "invalid_field",
+    },
+    {
+      name: "top-level __proto__ field",
+      document: JSON.parse("{\"__proto__\":{\"polluted\":true},\"profile\":{\"name\":\"Alice\"}}"),
+      errorType: "invalid_field",
+    },
+    {
+      name: "nested and dotted conflict",
+      document: { profile: { name: "Alice" }, "profile.name": "Bob" },
+      errorType: "conflicting_field",
+    },
+    {
+      name: "parent and child dotted conflict",
+      document: { "profile.name": "Alice", profile: { name: "Bob" } },
+      errorType: "conflicting_field",
+    },
+  ];
+
+  for (const { name, document, errorType } of invalidDocuments) {
+    try {
+      await TestCollection.insertAsync(document);
+      test.fail(`${name} should be rejected`);
+    } catch (error) {
+      test.isTrue(ValidationError.is(error), `${name} should throw ValidationError`);
+      test.equal(error.details[0].type, errorType, `${name} should report ${errorType}`);
+    }
+  }
+
+  test.isUndefined(Object.prototype.polluted, "Dotted insert validation must not pollute Object.prototype");
+});
+
+Tinytest.addAsync("extendWithSchema - withDates insert and update composition", async (test) => {
+  const modifierCollection = createTestCollection(`datesModifier-${Random.id()}`, true);
+  const schema = z.object({ key: z.string(), value: z.number() });
+  const suppliedDate = new Date(0);
+
+  modifierCollection.withSchema(schema).withDates();
+
+  const insertedId = await modifierCollection.insertAsync({
+    key: "insert",
+    value: 1,
+    createdAt: suppliedDate,
+    updatedAt: suppliedDate,
+  });
+  const insertedDoc = await modifierCollection.findOneAsync(insertedId);
+
+  test.isTrue(insertedDoc.createdAt > suppliedDate, "withDates should replace a supplied createdAt on insert");
+  test.isTrue(insertedDoc.updatedAt > suppliedDate, "withDates should replace a supplied updatedAt on insert");
+
+  await new Promise(resolve => setTimeout(resolve, 25));
+  await modifierCollection.updateAsync(insertedId, {
+    $set: { value: 4, createdAt: suppliedDate, updatedAt: suppliedDate },
+  });
+  const updatedDoc = await modifierCollection.findOneAsync(insertedId);
+
+  test.equal(updatedDoc.createdAt.getTime(), insertedDoc.createdAt.getTime(), "Updates should preserve createdAt");
+  test.isTrue(updatedDoc.updatedAt > insertedDoc.updatedAt, "Updates should refresh updatedAt");
+});
+
+Tinytest.addAsync("extendWithSchema - withDates modifier upsert on server collection", async (test) => {
+  const TestCollection = createTestCollection(`datesModifierUpsert-${Random.id()}`, true);
+  const schema = z.object({ key: z.string(), value: z.number() });
+
+  TestCollection.withSchema(schema).withDates();
+
+  const result = await TestCollection.upsertAsync(
+    { key: "modifier" },
+    { $set: { value: 2 } },
+  );
+  const doc = await TestCollection.findOneAsync(result.insertedId);
+
+  test.instanceOf(doc.createdAt, Date, "Modifier upsert should set createdAt");
+  test.instanceOf(doc.updatedAt, Date, "Modifier upsert should set updatedAt");
+});
+
+Tinytest.addAsync("extendWithSchema - withDates replacement upsert preserves createdAt", async (test) => {
+  const TestCollection = createTestCollection(`datesReplacement-${Random.id()}`, true);
+  const schema = z.object({ key: z.string(), value: z.number() });
+
+  TestCollection.withSchema(schema).withDates();
+
+  const result = await TestCollection.upsertAsync(
+    { key: "replacement" },
+    { key: "replacement", value: 3 },
+  );
+  const insertedDoc = await TestCollection.findOneAsync(result.insertedId);
+
+  test.instanceOf(insertedDoc.createdAt, Date, "Replacement upsert should set createdAt");
+  test.instanceOf(insertedDoc.updatedAt, Date, "Replacement upsert should set updatedAt");
+
+  await new Promise(resolve => setTimeout(resolve, 25));
+  await TestCollection.upsertAsync(
+    { key: "replacement" },
+    { key: "replacement", value: 4 },
+  );
+  const updatedDoc = await TestCollection.findOneAsync(result.insertedId);
+
+  test.equal(
+    updatedDoc.createdAt.getTime(),
+    insertedDoc.createdAt.getTime(),
+    "Replacement upsert updates should preserve createdAt",
+  );
+  test.isTrue(updatedDoc.updatedAt > insertedDoc.updatedAt, "Replacement upsert updates should refresh updatedAt");
+});
+
+Tinytest.addAsync("extendWithSchema - withUser composition and upserts", async (test) => {
+  const insertCollection = createTestCollection(`userInsert-${Random.id()}`, true);
+  const modifierCollection = createTestCollection(`userModifier-${Random.id()}`, true);
+  const replacementCollection = createTestCollection(`userReplacement-${Random.id()}`, true);
+  const schema = z.object({ key: z.string(), value: z.number() });
+
+  insertCollection.withSchema(schema).withUser();
+  modifierCollection.withSchema(schema).withUser();
+  replacementCollection.withSchema(schema).withUser();
+
+  const originalUserId = Meteor.userId;
+  const firstUserId = Random.id();
+  const secondUserId = Random.id();
+
+  try {
+    Meteor.userId = () => firstUserId;
+
+    const insertedId = await insertCollection.insertAsync({
+      key: "insert",
+      value: 1,
+      userId: secondUserId,
+    });
+    let insertedDoc = await insertCollection.findOneAsync(insertedId);
+
+    test.equal(insertedDoc.userId, firstUserId, "Insert should use the current user instead of supplied ownership");
+
+    const modifierResult = await modifierCollection.upsertAsync(
+      { key: "modifier" },
+      { $set: { value: 2 } },
+    );
+    const modifierDoc = await modifierCollection.findOneAsync(modifierResult.insertedId);
+
+    test.equal(modifierDoc.userId, firstUserId, "Modifier upsert should set the current user on insert");
+
+    const replacementResult = await replacementCollection.upsertAsync(
+      { key: "replacement" },
+      { key: "replacement", value: 3, userId: secondUserId },
+    );
+    const replacementDoc = await replacementCollection.findOneAsync(replacementResult.insertedId);
+
+    test.equal(replacementDoc.userId, firstUserId, "Replacement upsert should set the current user");
+
+    Meteor.userId = () => secondUserId;
+    await insertCollection.updateAsync(insertedId, { $set: { value: 4, userId: secondUserId } });
+    insertedDoc = await insertCollection.findOneAsync(insertedId);
+
+    test.equal(insertedDoc.userId, firstUserId, "$set should not change the creating user");
+  } finally {
+    Meteor.userId = originalUserId;
+  }
+});
+
+Tinytest.addAsync("extendWithSchema - withUser replacement upsert preserves creator", async (test) => {
+  const TestCollection = createTestCollection(`userReplacementCreator-${Random.id()}`, true);
+  const schema = z.object({ key: z.string(), value: z.number() });
+  const originalUserId = Meteor.userId;
+  const firstUserId = Random.id();
+  const secondUserId = Random.id();
+
+  TestCollection.withSchema(schema).withUser();
+
+  try {
+    Meteor.userId = () => firstUserId;
+    const result = await TestCollection.upsertAsync(
+      { key: "replacement" },
+      { key: "replacement", value: 1 },
+    );
+
+    Meteor.userId = () => secondUserId;
+    await TestCollection.upsertAsync(
+      { key: "replacement" },
+      { key: "replacement", value: 2 },
+    );
+
+    const doc = await TestCollection.findOneAsync(result.insertedId);
+
+    test.equal(doc.userId, firstUserId, "Replacement upsert updates should preserve the creating user");
+  } finally {
+    Meteor.userId = originalUserId;
+  }
+});
+
+Tinytest.addAsync("extendWithSchema - soft delete lifecycle and disabled recovery", async (test) => {
+  const TestCollection = createTestCollection(`softDeleteLifecycle-${Random.id()}`, true);
+  const PlainCollection = createTestCollection(`softDeleteDisabled-${Random.id()}`, true);
+  const schema = z.object({ name: z.string() });
+
+  TestCollection.withSchema(schema).withSoftDelete().withDates();
+  PlainCollection.withSchema(schema);
+
+  const docId = await TestCollection.insertAsync({ name: "Recoverable" });
+  const insertedDoc = await TestCollection.findOneAsync(docId);
+
+  test.isFalse(insertedDoc.isDeleted, "Soft-delete documents should default to active");
+  test.isUndefined(insertedDoc.deletedAt, "Active documents should not have deletedAt");
+
+  await new Promise(resolve => setTimeout(resolve, 25));
+  await TestCollection.removeAsync(docId);
+  const deletedDoc = await TestCollection.findOneAsync(docId);
+
+  test.isTrue(deletedDoc.isDeleted, "removeAsync should mark the document deleted");
+  test.instanceOf(deletedDoc.deletedAt, Date, "removeAsync should set deletedAt");
+  test.isTrue(deletedDoc.updatedAt > insertedDoc.updatedAt, "Soft deletion should refresh updatedAt");
+
+  await new Promise(resolve => setTimeout(resolve, 25));
+  await TestCollection.removeAsync(docId);
+  const deletedAgainDoc = await TestCollection.findOneAsync(docId);
+
+  test.isTrue(deletedAgainDoc.deletedAt >= deletedDoc.deletedAt, "Repeated deletion should keep a valid deletion time");
+
+  await TestCollection.recoverAsync(docId);
+  const recoveredDoc = await TestCollection.findOneAsync(docId);
+
+  test.isFalse(recoveredDoc.isDeleted, "recoverAsync should reactivate the document");
+  test.isUndefined(recoveredDoc.deletedAt, "recoverAsync should remove deletedAt");
+  test.isTrue(recoveredDoc.updatedAt >= deletedAgainDoc.updatedAt, "Recovery should refresh updatedAt");
+
+  try {
+    await PlainCollection.recoverAsync("missing");
+    test.fail("recoverAsync should fail when soft delete is disabled");
+  } catch (error) {
+    test.equal(error.error, "SOFT_DELETE_DISABLED", "Disabled recovery should expose its documented error code");
+  }
+});
