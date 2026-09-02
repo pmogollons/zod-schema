@@ -1426,6 +1426,10 @@ Tinytest.addAsync("extendWithSchema - $unset", async (test) => {
   test.equal(doc.meta.clicks, undefined, "Should unset clicks field");
   test.equal(doc.meta.views, 200, "Should stay the same views field");
 
+  await TestCollection.updateAsync(docId, { $unset: { name: 1 } });
+  const docWithNumericUnset = await TestCollection.findOneAsync(docId);
+  test.equal(docWithNumericUnset.name, undefined, "Should accept 1 as an $unset value");
+
   await TestCollection.updateAsync(docId, { $unset: { meta: true } });
   const doc2 = await TestCollection.findOneAsync(docId);
   test.equal(doc2.age, 30, "Should stay the same age field");

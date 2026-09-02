@@ -201,9 +201,9 @@ writeMethods.forEach(methodName => {
 
               checkFieldExists(fieldSchema, field);
 
-              // Validate that $unset values are empty strings or true (MongoDB accepts either)
+              // Validate the supported MongoDB $unset marker values
               const unsetSchema = z.object({
-                [field]: z.union([z.literal(""), z.literal(true)]),
+                [field]: z.union([z.literal(""), z.literal(true), z.literal(1)]),
               });
 
               try {
@@ -212,7 +212,7 @@ writeMethods.forEach(methodName => {
                 throw new ValidationError([{
                   name: field,
                   type: "invalid_unset_value",
-                  message: `Invalid $unset value for field "${field}". Value must be "" or true.`,
+                  message: `Invalid $unset value for field "${field}". Value must be "", true, or 1.`,
                 }], "Invalid $unset operation");
               }
             });
