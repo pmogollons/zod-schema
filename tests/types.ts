@@ -14,6 +14,8 @@ declare const TestSchema: ZodSchema;
 // This block is compiled as a type test but never performs mutations.
 // eslint-disable-next-line no-constant-condition
 if (false) {
+  TestCollection.withUser();
+
   TestCollection
     .withSchema(TestSchema)
     .withDates()
